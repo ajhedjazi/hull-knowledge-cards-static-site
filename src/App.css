@@ -641,6 +641,45 @@ footer {
   background: #fff2d7;
 }
 
+.assessment-brief {
+  color: #fff;
+  background: linear-gradient(135deg, #073b3a, #0b5753);
+  border-radius: 17px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 15px 17px;
+  display: flex;
+}
+
+.assessment-brief > div {
+  gap: 2px;
+  display: grid;
+}
+
+.assessment-brief small {
+  color: #ffffffa8;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.assessment-brief strong {
+  font-size: 1.02rem;
+}
+
+.assessment-brief > span {
+  color: #073b3a;
+  white-space: nowrap;
+  background: #f3bf59;
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
 .route-points {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: stretch;
@@ -716,6 +755,179 @@ footer {
   font-size: 1.55rem;
   font-weight: 900;
   display: grid;
+}
+
+.assessment-map-shell {
+  background: #dfe9e5;
+  border: 1px solid #b9cec7;
+  border-radius: 20px;
+  margin-top: 15px;
+  position: relative;
+  overflow: hidden;
+}
+
+.assessment-map {
+  z-index: 0;
+  width: 100%;
+  height: 430px;
+}
+
+.assessment-map.is-locked {
+  cursor: default;
+}
+
+.assessment-map-marker {
+  background: transparent;
+  border: 0;
+}
+
+.assessment-map-marker > span {
+  text-shadow:
+    0 2px 0 #fff,
+    2px 0 0 #fff,
+    0 -2px 0 #fff,
+    -2px 0 0 #fff,
+    0 5px 12px #001d1b66;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  font-size: 2rem;
+  font-weight: 950;
+  display: grid;
+}
+
+.assessment-map-marker .map-triangle {
+  color: #c77c10;
+}
+
+.assessment-map-marker .map-circle {
+  color: #0b675d;
+}
+
+.assessment-map .leaflet-tooltip {
+  color: #173f3c;
+  background: #fffffff2;
+  border: 1px solid #c8d8d3;
+  border-radius: 8px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  box-shadow: 0 4px 14px #073b3a24;
+}
+
+.assessment-map .leaflet-control-attribution {
+  font-size: 0.62rem;
+}
+
+.map-legend {
+  z-index: 500;
+  color: #385753;
+  background: #fffffff2;
+  border: 1px solid #c6d7d1;
+  border-radius: 12px;
+  flex-wrap: wrap;
+  gap: 8px 13px;
+  padding: 8px 10px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  display: flex;
+  position: absolute;
+  bottom: 24px;
+  left: 10px;
+  box-shadow: 0 6px 20px #073b3a1f;
+}
+
+.map-legend span {
+  align-items: center;
+  gap: 5px;
+  display: flex;
+}
+
+.map-legend i {
+  font-style: normal;
+}
+
+.legend-triangle {
+  color: #c77c10;
+}
+
+.legend-circle {
+  color: #0b675d;
+}
+
+.legend-line {
+  border-top: 4px solid;
+  width: 19px;
+  height: 0;
+  display: inline-block;
+}
+
+.legend-line.planned {
+  border-top-color: #c77c10;
+  border-top-style: dashed;
+}
+
+.legend-line.model {
+  border-top-color: #0b675d;
+}
+
+.planning-panel {
+  background: #fff;
+  border: 1px solid #cadbd5;
+  border-radius: 18px;
+  grid-template-columns: 1fr minmax(220px, auto);
+  align-items: center;
+  gap: 18px;
+  margin-top: 12px;
+  padding: 16px;
+  display: grid;
+}
+
+.planning-panel > div:first-child {
+  gap: 3px;
+  display: grid;
+}
+
+.planning-panel small {
+  color: #c06b09;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.planning-panel strong {
+  color: #073b3a;
+  font-size: 1.04rem;
+}
+
+.planning-panel p {
+  color: #5d7471;
+  margin: 2px 0 0;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.planning-actions {
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  display: grid;
+}
+
+.planning-actions button {
+  border-radius: 11px;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.planning-actions .primary {
+  grid-column: 1 / -1;
+}
+
+.planning-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .examiner-tip {
@@ -800,6 +1012,17 @@ footer {
   border-color: #fff;
   margin-top: 8px;
   min-width: min(300px, 100%);
+}
+
+.edit-plan {
+  color: #fff;
+  text-underline-offset: 3px;
+  background: transparent;
+  border: 0;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-decoration: underline;
 }
 
 .route-answer {
@@ -931,6 +1154,15 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .assessment-brief {
+    align-items: flex-start;
+  }
+
+  .assessment-brief > span {
+    white-space: normal;
+    text-align: center;
+  }
+
   .route-connector {
     width: 100%;
     height: 20px;
@@ -950,6 +1182,19 @@ footer {
   .route-status {
     text-align: right;
     max-width: 145px;
+  }
+
+  .assessment-map {
+    height: 390px;
+  }
+
+  .map-legend {
+    max-width: calc(100% - 20px);
+    bottom: 24px;
+  }
+
+  .planning-panel {
+    grid-template-columns: 1fr;
   }
 
   .examiner-tip {
