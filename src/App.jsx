@@ -858,10 +858,10 @@ function RouteTest({
         <div className="planning-panel">
           <div>
             <small>Map planning</small>
-            <strong>Tap the roads or junctions you would use</strong>
+            <strong>Build your route one short section at a time</strong>
             <p>
-              Add points in order from ▲ to ●. Your amber line is a planning
-              sketch, so follow the roads as closely as you can.
+              Tap a nearby road or junction to extend the amber line. It will
+              only join the ● drop-off when you press “Finish planning”.
             </p>
           </div>
           <div className="planning-actions">
@@ -1091,7 +1091,7 @@ function AssessmentMap({
 
     if (plannedPoints.length) {
       planLayerRef.current = L.polyline(
-        [route.start, ...plannedPoints, route.end],
+        [route.start, ...plannedPoints, ...(locked ? [route.end] : [])],
         {
           color: "#c77c10",
           dashArray: "9 8",
@@ -1101,7 +1101,7 @@ function AssessmentMap({
         },
       ).addTo(map);
     }
-  }, [plannedPoints, route]);
+  }, [locked, plannedPoints, route]);
 
   useEffect(() => {
     const map = mapRef.current;
