@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
 import { routes } from "./data/routes";
 import { venues } from "./data/venues";
 import "./App.css";
@@ -751,6 +753,14 @@ function RouteTest({
   progressStatus,
   assessRoute,
 }) {
+  const [plannedPoints, setPlannedPoints] = useState([]);
+  const [planLocked, setPlanLocked] = useState(false);
+
+  useEffect(() => {
+    setPlannedPoints([]);
+    setPlanLocked(false);
+  }, [route.id]);
+
   const checklistItems = [
     { id: "streetNames", label: "Mentioned street names" },
     {
@@ -767,7 +777,7 @@ function RouteTest({
     <section className="route-panel">
       <div className="route-topline">
         <span className="route-badge">
-          Route {routeIndex + 1} of {routeCount}
+          Assessment map {routeIndex + 1} of {routeCount}
         </span>
         {progressStatus && (
           <span className={`route-status ${progressStatus}`}>
@@ -776,6 +786,14 @@ function RouteTest({
               : "Needs practice"}
           </span>
         )}
+      </div>
+
+      <div className="assessment-brief">
+        <div>
+          <small>{route.area}</small>
+          <strong>Plan the shortest sensible driving route</strong>
+        </div>
+        <span>{route.estimatedMinutes}</span>
       </div>
 
       <div className="route-points">
@@ -806,6 +824,77 @@ function RouteTest({
         </article>
       </div>
 
+      <div className="assessment-map-shell">
+        <AssessmentMap
+          route={route}
+          plannedPoints={plannedPoints}
+          onAddPoint={(point) =>
+            setPlannedPoints((points) => [...points, point])
+          }
+          locked={planLocked}
+          revealed={revealed}
+        />
+        <div className="map-legend" aria-label="Map key">
+          <span>
+            <i className="legend-triangle">▲</i> Collection
+          </span>
+          <span>
+            <i className="legend-circle">●</i> Drop-off
+          </span>
+          {plannedPoints.length > 0 && (
+            <span>
+              <i className="legend-line planned" /> Your plan
+            </span>
+          )}
+          {revealed && (
+            <span>
+              <i className="legend-line model" /> Model route
+            </span>
+          )}
+        </div>
+      </div>
+
+      {!planLocked && (
+        <div className="planning-panel">
+          <div>
+            <small>Map planning</small>
+            <strong>Tap the roads or junctions you would use</strong>
+            <p>
+              Add points in order from ▲ to ●. Your amber line is a planning
+              sketch, so follow the roads as closely as you can.
+            </p>
+          </div>
+          <div className="planning-actions">
+            <button
+              className="ghost"
+              type="button"
+              disabled={!plannedPoints.length}
+              onClick={() =>
+                setPlannedPoints((points) => points.slice(0, -1))
+              }
+            >
+              Undo point
+            </button>
+            <button
+              className="text-button danger-text"
+              type="button"
+              disabled={!plannedPoints.length}
+              onClick={() => setPlannedPoints([])}
+            >
+              Reset line
+            </button>
+            <button
+              className="primary"
+              type="button"
+              disabled={!plannedPoints.length}
+              onClick={() => setPlanLocked(true)}
+            >
+              Finish planning
+            </button>
+          </div>
+        </div>
+      )}
+
       <aside className="examiner-tip">
         <span className="tip-icon" aria-hidden="true">
           !
@@ -819,19 +908,26 @@ function RouteTest({
         </div>
       </aside>
 
-      {!revealed ? (
+      {planLocked && !revealed && (
         <div className="speak-prompt">
           <span className="speak-icon" aria-hidden="true">
             ◉
           </span>
           <div>
             <small>Your turn</small>
-            <h2>Practice speaking the route out loud</h2>
+            <h2>Now describe your planned route out loud</h2>
             <p>
-              Name each road, count junctions and say exactly where the road
-              ends before checking the model.
+              Imagine the course leader is listening. Name each road, count
+              junctions and say exactly where the road ends.
             </p>
           </div>
+          <button
+            className="edit-plan"
+            onClick={() => setPlanLocked(false)}
+            type="button"
+          >
+            Edit my route
+          </button>
           <button
             className="primary reveal-route"
             onClick={() => setRevealed(true)}
@@ -840,7 +936,9 @@ function RouteTest({
             Reveal Model Answer
           </button>
         </div>
-      ) : (
+      )}
+
+      {revealed && (
         <div className="route-answer" aria-live="polite">
           <div className="key-roads">
             <small>Key roads</small>
@@ -892,5 +990,144 @@ function RouteTest({
         </div>
       )}
     </section>
+  );
+}
+
+function AssessmentMap({
+  route,
+  plannedPoints,
+  onAddPoint,
+  locked,
+  revealed,
+}) {
+  const mapElementRef = useRef(null);
+  const mapRef = useRef(null);
+  const planLayerRef = useRef(null);
+  const modelLayerRef = useRef(null);
+  const lockedRef = useRef(locked);
+  const onAddPointRef = useRef(onAddPoint);
+
+  useEffect(() => {
+    lockedRef.current = locked;
+    onAddPointRef.current = onAddPoint;
+  }, [locked, onAddPoint]);
+
+  useEffect(() => {
+    if (!mapElementRef.current) return undefined;
+
+    const map = L.map(mapElementRef.current, {
+      scrollWheelZoom: false,
+      zoomControl: true,
+    });
+    mapRef.current = map;
+
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      maxZoom: 19,
+    }).addTo(map);
+
+    const markerIcon = (symbol, markerClass) =>
+      L.divIcon({
+        className: "assessment-map-marker",
+        html: `<span class="${markerClass}">${symbol}</span>`,
+        iconAnchor: [18, 30],
+        iconSize: [36, 36],
+      });
+
+    L.marker(route.start, {
+      icon: markerIcon("▲", "map-triangle"),
+      keyboard: false,
+    })
+      .addTo(map)
+      .bindTooltip(route.startName, {
+        direction: "top",
+        offset: [0, -28],
+        permanent: true,
+      });
+
+    L.marker(route.end, {
+      icon: markerIcon("●", "map-circle"),
+      keyboard: false,
+    })
+      .addTo(map)
+      .bindTooltip(route.endName, {
+        direction: "top",
+        offset: [0, -28],
+        permanent: true,
+      });
+
+    const bounds = L.latLngBounds([route.start, route.end]);
+    map.fitBounds(bounds, {
+      padding: [48, 48],
+      maxZoom: 14,
+    });
+
+    const handleMapClick = (event) => {
+      if (!lockedRef.current) {
+        onAddPointRef.current([event.latlng.lat, event.latlng.lng]);
+      }
+    };
+
+    map.on("click", handleMapClick);
+
+    return () => {
+      map.off("click", handleMapClick);
+      map.remove();
+      mapRef.current = null;
+      planLayerRef.current = null;
+      modelLayerRef.current = null;
+    };
+  }, [route]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (planLayerRef.current) {
+      planLayerRef.current.remove();
+      planLayerRef.current = null;
+    }
+
+    if (plannedPoints.length) {
+      planLayerRef.current = L.polyline(
+        [route.start, ...plannedPoints, route.end],
+        {
+          color: "#c77c10",
+          dashArray: "9 8",
+          lineCap: "round",
+          opacity: 0.95,
+          weight: 6,
+        },
+      ).addTo(map);
+    }
+  }, [plannedPoints, route]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (modelLayerRef.current) {
+      modelLayerRef.current.remove();
+      modelLayerRef.current = null;
+    }
+
+    if (revealed) {
+      modelLayerRef.current = L.polyline(route.modelPath, {
+        color: "#0b675d",
+        lineCap: "round",
+        opacity: 0.9,
+        weight: 7,
+      }).addTo(map);
+    }
+  }, [revealed, route]);
+
+  return (
+    <div
+      className={`assessment-map ${locked ? "is-locked" : ""}`}
+      ref={mapElementRef}
+      role="application"
+      aria-label={`Route planning map from ${route.startName} to ${route.endName}`}
+    />
   );
 }
