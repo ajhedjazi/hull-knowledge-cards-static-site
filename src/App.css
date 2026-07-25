@@ -875,6 +875,118 @@ footer {
   border-top-color: #0b675d;
 }
 
+.legend-line.options {
+  border-top-color: #5e7290;
+  border-top-style: double;
+}
+
+.route-choice-panel {
+  background: #fff;
+  border: 1px solid #cadbd5;
+  border-radius: 19px;
+  gap: 15px;
+  margin-top: 12px;
+  padding: 18px;
+  display: grid;
+}
+
+.route-choice-heading {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.72fr);
+  align-items: end;
+  gap: 20px;
+  display: grid;
+}
+
+.route-choice-heading small,
+.route-comparison-heading small,
+.route-result small {
+  color: #b8650b;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.route-choice-heading h2 {
+  color: #073b3a;
+  margin: 3px 0 0;
+  font-size: clamp(1.2rem, 3vw, 1.55rem);
+}
+
+.route-choice-heading p {
+  color: #5d7471;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.route-option-grid {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+  display: grid;
+}
+
+.route-option-button {
+  color: #234744;
+  text-align: left;
+  background: #f8fbfa;
+  border: 2px solid #d6e1de;
+  border-radius: 15px;
+  grid-template-columns: 39px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  display: grid;
+  box-shadow: none;
+}
+
+.route-option-button:hover {
+  border-color: var(--route-colour);
+  transform: translateY(-1px);
+}
+
+.route-option-button.is-selected {
+  background: color-mix(in srgb, var(--route-colour) 9%, white);
+  border-color: var(--route-colour);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--route-colour) 15%, transparent);
+}
+
+.route-option-letter,
+.comparison-letter {
+  color: #fff;
+  background: var(--route-colour);
+  border-radius: 11px;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  font-size: 1rem;
+  font-weight: 950;
+  display: grid;
+}
+
+.route-option-button strong,
+.route-option-button small {
+  display: block;
+}
+
+.route-option-button small {
+  color: #6d807e;
+  margin-top: 2px;
+  font-size: 0.67rem;
+  font-weight: 750;
+}
+
+.route-choice-confirm {
+  justify-self: end;
+  min-width: min(260px, 100%);
+}
+
+.route-choice-confirm:disabled {
+  cursor: not-allowed;
+  opacity: 0.43;
+}
+
 .planning-panel {
   background: #fff;
   border: 1px solid #cadbd5;
@@ -1044,6 +1156,123 @@ footer {
   display: grid;
 }
 
+.route-result {
+  background: #f1f8f5;
+  border: 1px solid #b9d7cc;
+  border-radius: 19px;
+  grid-template-columns: 46px 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 18px;
+  display: grid;
+}
+
+.route-result.is-incorrect {
+  background: #fff8f3;
+  border-color: #e2b9a7;
+}
+
+.route-result-icon {
+  color: #fff;
+  background: #0b675d;
+  border-radius: 14px;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  font-size: 1.35rem;
+  font-weight: 950;
+  display: grid;
+}
+
+.route-result.is-incorrect .route-result-icon {
+  background: #b54b3a;
+}
+
+.route-result.is-incorrect small {
+  color: #a44634;
+}
+
+.route-result h2 {
+  color: #073b3a;
+  margin: 3px 0;
+  font-size: clamp(1.15rem, 3vw, 1.55rem);
+}
+
+.route-result p {
+  color: #496663;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.route-comparison {
+  background: #fff;
+  border: 1px solid #d3dfdb;
+  border-radius: 19px;
+  gap: 13px;
+  padding: 18px;
+  display: grid;
+}
+
+.route-comparison-heading {
+  gap: 3px;
+  display: grid;
+}
+
+.route-comparison-heading strong {
+  color: #073b3a;
+  font-size: 1.06rem;
+}
+
+.route-comparison-grid {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  display: grid;
+}
+
+.route-comparison-card {
+  background: #f8faf9;
+  border: 1px solid #d7e0dd;
+  border-radius: 14px;
+  gap: 8px;
+  padding: 11px;
+  display: grid;
+}
+
+.route-comparison-card.is-shortest {
+  background: #eaf6f1;
+  border-color: #8fc5b4;
+}
+
+.route-comparison-card > div {
+  align-items: center;
+  gap: 7px;
+  display: flex;
+}
+
+.route-comparison-card .comparison-letter {
+  border-radius: 8px;
+  width: 29px;
+  height: 29px;
+  font-size: 0.78rem;
+}
+
+.route-comparison-card strong {
+  color: #244946;
+  font-size: 0.8rem;
+}
+
+.route-comparison-card b {
+  color: #073b3a;
+  font-size: 1rem;
+}
+
+.route-comparison-card small {
+  color: #647976;
+  min-height: 2.2em;
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
 .key-roads {
   background: #eef6f2;
   border: 1px solid #c8dbd5;
@@ -1210,6 +1439,20 @@ footer {
     grid-template-columns: 1fr;
   }
 
+  .route-choice-heading {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .route-option-grid,
+  .route-comparison-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .route-choice-confirm {
+    justify-self: stretch;
+  }
+
   .examiner-tip {
     padding: 14px;
   }
@@ -1223,6 +1466,13 @@ footer {
   }
 
   .route-assessment {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (width<=420px) {
+  .route-option-grid,
+  .route-comparison-grid {
     grid-template-columns: 1fr;
   }
 }
