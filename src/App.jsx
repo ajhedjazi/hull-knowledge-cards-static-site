@@ -3,6 +3,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { routes } from "./data/routes";
 import { venues } from "./data/venues";
+import RouteChoiceTest from "./RouteChoiceTest";
 import "./App.css";
 
 const ALL_CATEGORIES = "All categories";
@@ -443,7 +444,7 @@ export default function App() {
         )}
 
         {mode === "route" && (
-          <RouteTest
+          <RouteChoiceTest
             route={currentRoute}
             routeIndex={routeIndex}
             routeCount={routes.length}
