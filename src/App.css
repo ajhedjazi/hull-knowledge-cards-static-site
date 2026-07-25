@@ -776,6 +776,10 @@ footer {
   cursor: default;
 }
 
+.assessment-map.is-busy {
+  cursor: progress;
+}
+
 .assessment-map-marker {
   background: transparent;
   border: 0;
@@ -881,6 +885,15 @@ footer {
   margin-top: 12px;
   padding: 16px;
   display: grid;
+}
+
+.planning-panel.has-error {
+  background: #fffaf8;
+  border-color: #ddb5aa;
+}
+
+.planning-panel.has-error small {
+  color: #a43f2d;
 }
 
 .planning-panel > div:first-child {
