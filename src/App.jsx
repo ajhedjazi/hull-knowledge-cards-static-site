@@ -8,6 +8,10 @@ import "./App.css";
 const ALL_CATEGORIES = "All categories";
 const CARD_PROGRESS_KEY = "hull-knowledge-progress-v1";
 const ROUTE_PROGRESS_KEY = "hull-route-progress-v1";
+const ROUTING_API_BASE_URL = (
+  import.meta.env.VITE_ROUTING_API_URL || "https://router.project-osrm.org"
+).replace(/\/$/, "");
+const ROAD_SNAP_RADIUS_METRES = 120;
 const EMPTY_CHECKLIST = {
   streetNames: false,
   endOfRoad: false,
@@ -46,6 +50,21 @@ function readSavedProgress(key) {
   } catch {
     return {};
   }
+}
+
+function buildRoadRouteUrl(points) {
+  const coordinates = points
+    .map(([latitude, longitude]) => `${longitude},${latitude}`)
+    .join(";");
+  const query = new URLSearchParams({
+    alternatives: "false",
+    steps: "false",
+    geometries: "geojson",
+    overview: "full",
+    radiuses: points.map(() => ROAD_SNAP_RADIUS_METRES).join(";"),
+  });
+
+  return `${ROUTING_API_BASE_URL}/route/v1/driving/${coordinates}?${query}`;
 }
 
 export default function App() {
@@ -755,11 +774,51 @@ function RouteTest({
 }) {
   const [plannedPoints, setPlannedPoints] = useState([]);
   const [planLocked, setPlanLocked] = useState(false);
+  const [routingStatus, setRoutingStatus] = useState("idle");
+  const [routingAttempt, setRoutingAttempt] = useState(0);
 
   useEffect(() => {
     setPlannedPoints([]);
     setPlanLocked(false);
+    setRoutingStatus("idle");
+    setRoutingAttempt(0);
   }, [route.id]);
+
+  const isRouting = routingStatus === "routing";
+  const routingFailed = routingStatus === "error";
+  const routeIsReady = routingStatus === "ready";
+
+  function addPlannedPoint(point) {
+    setRoutingStatus("routing");
+    setPlannedPoints((points) => [...points, point]);
+  }
+
+  function undoPlannedPoint() {
+    const nextPoints = plannedPoints.slice(0, -1);
+    setPlannedPoints(nextPoints);
+    setRoutingStatus(nextPoints.length ? "routing" : "idle");
+  }
+
+  function resetPlan() {
+    setPlannedPoints([]);
+    setPlanLocked(false);
+    setRoutingStatus("idle");
+  }
+
+  function retryRoadSnap() {
+    setRoutingStatus("routing");
+    setRoutingAttempt((attempt) => attempt + 1);
+  }
+
+  function finishPlan() {
+    setRoutingStatus("routing");
+    setPlanLocked(true);
+  }
+
+  function editPlan() {
+    setRoutingStatus("routing");
+    setPlanLocked(false);
+  }
 
   const checklistItems = [
     { id: "streetNames", label: "Mentioned street names" },
@@ -828,9 +887,10 @@ function RouteTest({
         <AssessmentMap
           route={route}
           plannedPoints={plannedPoints}
-          onAddPoint={(point) =>
-            setPlannedPoints((points) => [...points, point])
-          }
+          onAddPoint={addPlannedPoint}
+          onRoutingStateChange={setRoutingStatus}
+          routingAttempt={routingAttempt}
+          planningDisabled={isRouting}
           locked={planLocked}
           revealed={revealed}
         />
@@ -854,43 +914,73 @@ function RouteTest({
         </div>
       </div>
 
-      {!planLocked && (
-        <div className="planning-panel">
+      {(!planLocked || !routeIsReady) && (
+        <div
+          className={`planning-panel ${routingFailed ? "has-error" : ""}`}
+          aria-live="polite"
+        >
           <div>
             <small>Map planning</small>
-            <strong>Build your route one short section at a time</strong>
+            <strong>
+              {isRouting
+                ? "Snapping that section to the roads…"
+                : routingFailed
+                  ? "Road snapping could not connect"
+                  : "Build your route one short section at a time"}
+            </strong>
             <p>
-              Tap a nearby road or junction to extend the amber line. It will
-              only join the ● drop-off when you press “Finish planning”.
+              {isRouting
+                ? "The amber line will appear when the road-following section is ready."
+                : routingFailed
+                  ? "Retry, or undo the last point and tap a nearby road or junction."
+                  : "Tap a nearby road or junction. Each short section will follow the road and only join the ● drop-off when you press “Finish planning”."}
             </p>
           </div>
           <div className="planning-actions">
-            <button
-              className="ghost"
-              type="button"
-              disabled={!plannedPoints.length}
-              onClick={() =>
-                setPlannedPoints((points) => points.slice(0, -1))
-              }
-            >
-              Undo point
-            </button>
-            <button
-              className="text-button danger-text"
-              type="button"
-              disabled={!plannedPoints.length}
-              onClick={() => setPlannedPoints([])}
-            >
-              Reset line
-            </button>
-            <button
-              className="primary"
-              type="button"
-              disabled={!plannedPoints.length}
-              onClick={() => setPlanLocked(true)}
-            >
-              Finish planning
-            </button>
+            {planLocked ? (
+              <button className="ghost" type="button" onClick={editPlan}>
+                Edit my route
+              </button>
+            ) : (
+              <>
+                <button
+                  className="ghost"
+                  type="button"
+                  disabled={!plannedPoints.length || isRouting}
+                  onClick={undoPlannedPoint}
+                >
+                  Undo point
+                </button>
+                <button
+                  className="text-button danger-text"
+                  type="button"
+                  disabled={!plannedPoints.length || isRouting}
+                  onClick={resetPlan}
+                >
+                  Reset line
+                </button>
+              </>
+            )}
+            {routingFailed ? (
+              <button
+                className="primary"
+                type="button"
+                onClick={retryRoadSnap}
+              >
+                Retry road snapping
+              </button>
+            ) : (
+              !planLocked && (
+                <button
+                  className="primary"
+                  type="button"
+                  disabled={!plannedPoints.length || !routeIsReady}
+                  onClick={finishPlan}
+                >
+                  Finish planning
+                </button>
+              )
+            )}
           </div>
         </div>
       )}
@@ -908,7 +998,7 @@ function RouteTest({
         </div>
       </aside>
 
-      {planLocked && !revealed && (
+      {planLocked && routeIsReady && !revealed && (
         <div className="speak-prompt">
           <span className="speak-icon" aria-hidden="true">
             ◉
@@ -923,7 +1013,7 @@ function RouteTest({
           </div>
           <button
             className="edit-plan"
-            onClick={() => setPlanLocked(false)}
+            onClick={editPlan}
             type="button"
           >
             Edit my route
@@ -997,6 +1087,9 @@ function AssessmentMap({
   route,
   plannedPoints,
   onAddPoint,
+  onRoutingStateChange,
+  routingAttempt,
+  planningDisabled,
   locked,
   revealed,
 }) {
@@ -1004,13 +1097,18 @@ function AssessmentMap({
   const mapRef = useRef(null);
   const planLayerRef = useRef(null);
   const modelLayerRef = useRef(null);
+  const [roadPath, setRoadPath] = useState([]);
   const lockedRef = useRef(locked);
+  const planningDisabledRef = useRef(planningDisabled);
   const onAddPointRef = useRef(onAddPoint);
+  const onRoutingStateChangeRef = useRef(onRoutingStateChange);
 
   useEffect(() => {
     lockedRef.current = locked;
+    planningDisabledRef.current = planningDisabled;
     onAddPointRef.current = onAddPoint;
-  }, [locked, onAddPoint]);
+    onRoutingStateChangeRef.current = onRoutingStateChange;
+  }, [locked, onAddPoint, onRoutingStateChange, planningDisabled]);
 
   useEffect(() => {
     if (!mapElementRef.current) return undefined;
@@ -1064,7 +1162,8 @@ function AssessmentMap({
     });
 
     const handleMapClick = (event) => {
-      if (!lockedRef.current) {
+      if (!lockedRef.current && !planningDisabledRef.current) {
+        planningDisabledRef.current = true;
         onAddPointRef.current([event.latlng.lat, event.latlng.lng]);
       }
     };
@@ -1081,6 +1180,60 @@ function AssessmentMap({
   }, [route]);
 
   useEffect(() => {
+    if (!plannedPoints.length) {
+      setRoadPath([]);
+      onRoutingStateChangeRef.current("idle");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const routePoints = [
+      route.start,
+      ...plannedPoints,
+      ...(locked ? [route.end] : []),
+    ];
+
+    setRoadPath([]);
+    onRoutingStateChangeRef.current("routing");
+
+    async function snapRouteToRoads() {
+      try {
+        const response = await fetch(buildRoadRouteUrl(routePoints), {
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Road routing returned ${response.status}`);
+        }
+
+        const result = await response.json();
+        const coordinates = result.routes?.[0]?.geometry?.coordinates;
+
+        if (result.code !== "Ok" || !Array.isArray(coordinates)) {
+          throw new Error("No road-following route was returned");
+        }
+
+        const nextRoadPath = coordinates.map(([longitude, latitude]) => [
+          latitude,
+          longitude,
+        ]);
+
+        setRoadPath(nextRoadPath);
+        onRoutingStateChangeRef.current("ready");
+      } catch (error) {
+        if (error.name === "AbortError") return;
+
+        setRoadPath([]);
+        onRoutingStateChangeRef.current("error");
+      }
+    }
+
+    snapRouteToRoads();
+
+    return () => controller.abort();
+  }, [locked, plannedPoints, route, routingAttempt]);
+
+  useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
@@ -1089,19 +1242,16 @@ function AssessmentMap({
       planLayerRef.current = null;
     }
 
-    if (plannedPoints.length) {
-      planLayerRef.current = L.polyline(
-        [route.start, ...plannedPoints, ...(locked ? [route.end] : [])],
-        {
-          color: "#c77c10",
-          dashArray: "9 8",
-          lineCap: "round",
-          opacity: 0.95,
-          weight: 6,
-        },
-      ).addTo(map);
+    if (roadPath.length) {
+      planLayerRef.current = L.polyline(roadPath, {
+        color: "#c77c10",
+        dashArray: "9 8",
+        lineCap: "round",
+        opacity: 0.95,
+        weight: 6,
+      }).addTo(map);
     }
-  }, [locked, plannedPoints, route]);
+  }, [roadPath]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -1124,7 +1274,9 @@ function AssessmentMap({
 
   return (
     <div
-      className={`assessment-map ${locked ? "is-locked" : ""}`}
+      className={`assessment-map ${locked ? "is-locked" : ""} ${
+        planningDisabled ? "is-busy" : ""
+      }`}
       ref={mapElementRef}
       role="application"
       aria-label={`Route planning map from ${route.startName} to ${route.endName}`}
