@@ -2,15 +2,16 @@ import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { routes } from "../src/data/routes.js";
 
-const ROUTING_API_BASE_URL = "https://router.project-osrm.org";
+const ROUTING_API_BASE_URL =
+  process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
 const LATITUDE_KM = 111;
 const LONGITUDE_KM = 66;
-const SNAP_RADIUS_METRES = 250;
+const SNAP_RADIUS_METRES = 150;
 const CORRECT_SLOTS = [1, 3, 0, 2, 1, 3, 0, 2];
 const MANUAL_VIA_POINTS = {
   "hri-to-the-deep": [
     [
-      [53.7488, -0.3505],
+      [53.748623, -0.347013],
       [53.7484, -0.341],
       [53.7448, -0.3325],
     ],
@@ -33,6 +34,28 @@ const MANUAL_VIA_POINTS = {
       [53.7472, -0.3746],
     ],
   ],
+  "hull-minster-to-pearson-park": [
+    [[53.7558251, -0.3589098]],
+  ],
+  "the-deep-to-east-park": [
+    [
+      [53.750258, -0.328837],
+      [53.753806, -0.319714],
+    ],
+  ],
+  "mkm-to-hull-minster": [
+    [[53.742278, -0.351135]],
+    [
+      [53.74204, -0.353872],
+      [53.742278, -0.351135],
+    ],
+  ],
+};
+const ALLOWED_REPEAT_ROADS = {
+  "hull-minster-to-pearson-park": ["Princes Avenue"],
+};
+const ALLOWED_UTURN_ROADS = {
+  "mkm-to-hull-minster": ["Anlaby Road"],
 };
 const outputPath = fileURLToPath(
   new URL("../src/data/routeOptions.generated.json", import.meta.url),
@@ -71,8 +94,14 @@ function buildRouteUrl(points, alternatives = 0) {
     steps: "true",
     geometries: "polyline6",
     overview: "full",
+    annotations: "nodes",
+    continue_straight: "true",
     radiuses: points.map(() => SNAP_RADIUS_METRES).join(";"),
   });
+
+  if (points.length > 2) {
+    query.set("waypoints", `0;${points.length - 1}`);
+  }
 
   return `${ROUTING_API_BASE_URL}/route/v1/driving/${coordinates}?${query}`;
 }
@@ -97,18 +126,42 @@ function routeSteps(candidate) {
   return candidate.legs.flatMap((leg) => leg.steps);
 }
 
+function roadName(step) {
+  return (step.name || step.ref || "").replace(/\s+/g, " ").trim();
+}
+
+function meaningfulSteps(candidate) {
+  const steps = [];
+  let previousRoad = "";
+
+  for (const step of routeSteps(candidate)) {
+    const name = roadName(step);
+    const type = step.maneuver?.type;
+
+    if (!name || type === "arrive" || type === "notification") continue;
+    if (name === previousRoad && type !== "roundabout" && type !== "rotary") {
+      continue;
+    }
+
+    steps.push({
+      road: name,
+      distanceMetres: Math.round(step.distance),
+      maneuverType: type || "continue",
+      modifier: step.maneuver?.modifier || "straight",
+      exit: step.maneuver?.exit || null,
+    });
+    previousRoad = name;
+  }
+
+  return steps;
+}
+
 function roadNames(candidate) {
   const names = [];
 
-  for (const step of routeSteps(candidate)) {
-    const name = step.name?.trim();
-
-    if (
-      name &&
-      step.distance >= 35 &&
-      names[names.length - 1] !== name
-    ) {
-      names.push(name);
+  for (const step of meaningfulSteps(candidate)) {
+    if (names[names.length - 1] !== step.road) {
+      names.push(step.road);
     }
   }
 
@@ -130,48 +183,85 @@ function turnPhrase(modifier) {
   return phrases[modifier] || "continue";
 }
 
+function ordinal(number) {
+  const remainder100 = number % 100;
+
+  if (remainder100 >= 11 && remainder100 <= 13) {
+    return `${number}th`;
+  }
+
+  const suffixes = { 1: "st", 2: "nd", 3: "rd" };
+  return `${number}${suffixes[number % 10] || "th"}`;
+}
+
+function capitalise(value) {
+  return `${value[0].toUpperCase()}${value.slice(1)}`;
+}
+
+function directionSide(modifier) {
+  if (modifier?.includes("left")) return "left";
+  if (modifier?.includes("right")) return "right";
+  return "";
+}
+
 function modelInstructions(candidate, route) {
-  const steps = routeSteps(candidate);
+  const steps = meaningfulSteps(candidate);
   const instructions = [];
-  let previousRoad = "";
 
-  for (const step of steps) {
-    const type = step.maneuver?.type;
-    const modifier = step.maneuver?.modifier;
-    const name = step.name?.trim();
+  for (const [stepIndex, step] of steps.entries()) {
+    const type = step.maneuverType;
+    const modifier = step.modifier;
+    const name = step.road;
 
-    if (type === "arrive") continue;
-    if (!name || step.distance < 35 || name === previousRoad) continue;
-
-    if (!instructions.length) {
-      instructions.push(`Leave ${route.startName} and join ${name}.`);
-    } else if (type === "roundabout" || type === "rotary") {
-      const exit = step.maneuver?.exit;
+    if (stepIndex === 0) {
+      instructions.push(`Leave ${route.startName} and follow ${name}.`);
+    } else if (
+      type === "roundabout" ||
+      type === "rotary" ||
+      type === "roundabout turn"
+    ) {
       instructions.push(
-        `At the roundabout, take${exit ? ` exit ${exit}` : " the appropriate exit"} onto ${name}.`,
+        `At the roundabout, take ${
+          step.exit ? `the ${ordinal(step.exit)} exit` : "the appropriate exit"
+        } onto ${name}.`,
       );
     } else if (type === "end of road") {
       instructions.push(
         `At the end of the road, ${turnPhrase(modifier)} onto ${name}.`,
       );
     } else if (type === "fork") {
-      instructions.push(`Keep ${modifier || "ahead"} onto ${name}.`);
-    } else if (type === "on ramp" || type === "off ramp") {
+      const side = directionSide(modifier);
       instructions.push(
-        `Take the ${modifier || ""} slip road onto ${name}.`.replace(
+        `Keep ${side || "ahead"} and continue onto ${name}.`,
+      );
+    } else if (type === "on ramp" || type === "off ramp") {
+      const side = directionSide(modifier);
+      instructions.push(
+        `Take the ${side ? `${side} ` : ""}slip road onto ${name}.`.replace(
           /\s+/g,
           " ",
         ),
       );
-    } else if (type === "turn") {
+    } else if (type === "merge") {
+      const side = directionSide(modifier);
       instructions.push(
-        `${turnPhrase(modifier)[0].toUpperCase()}${turnPhrase(modifier).slice(1)} onto ${name}.`,
+        side
+          ? `Bear ${side} and merge onto ${name}.`
+          : `Merge onto ${name}.`,
       );
+    } else if (type === "new name") {
+      instructions.push(`Continue as the road becomes ${name}.`);
+    } else if (type === "turn") {
+      instructions.push(`${capitalise(turnPhrase(modifier))} onto ${name}.`);
+    } else if (
+      type === "continue" &&
+      modifier &&
+      modifier !== "straight"
+    ) {
+      instructions.push(`${capitalise(turnPhrase(modifier))} onto ${name}.`);
     } else {
       instructions.push(`Continue onto ${name}.`);
     }
-
-    previousRoad = name;
   }
 
   instructions.push(`Continue until you reach ${route.endName}.`);
@@ -184,6 +274,7 @@ function compactCandidate(candidate, route) {
     distanceMetres: Math.round(candidate.distance),
     durationSeconds: Math.round(candidate.duration),
     roads: roadNames(candidate),
+    maneuvers: meaningfulSteps(candidate),
     instructions: modelInstructions(candidate, route),
   };
 }
@@ -240,52 +331,70 @@ async function candidatesForRoute(route) {
   const orderedCandidates = [...candidatesByGeometry.values()].sort(
     (left, right) => left.distance - right.distance,
   );
-  const maximumUsefulDistance = orderedCandidates[0].distance * 1.7;
-  const directGeometries = new Set(
-    directCandidates.map((candidate) => candidate.geometry),
-  );
+  const maximumUsefulDistance = orderedCandidates[0].distance * 2;
   const selectedCandidates = [];
-  const selectedGeometries = new Set();
   const selectedRoadSignatures = new Set();
+  const allowedRepeatedRoads = new Set();
+  const allowedUTurnRoads = new Set();
+
+  for (const road of ALLOWED_REPEAT_ROADS[route.id] || []) {
+    allowedRepeatedRoads.add(road.toLowerCase());
+  }
+
+  for (const road of ALLOWED_UTURN_ROADS[route.id] || []) {
+    allowedUTurnRoads.add(road.toLowerCase());
+  }
+
+  for (const candidate of directCandidates) {
+    const directRoads = roadNames(candidate).map((road) => road.toLowerCase());
+    const roadCounts = new Map();
+
+    for (const road of directRoads) {
+      roadCounts.set(road, (roadCounts.get(road) || 0) + 1);
+    }
+
+    for (const [road, count] of roadCounts) {
+      if (count > 1) allowedRepeatedRoads.add(road);
+    }
+
+    for (const step of routeSteps(candidate)) {
+      if (step.maneuver?.modifier === "uturn") {
+        allowedUTurnRoads.add(roadName(step).toLowerCase());
+      }
+    }
+  }
 
   for (const candidate of orderedCandidates) {
     const roads = roadNames(candidate);
-    const signature = roads.join("|");
-    const hasRepeatedRoad = new Set(roads).size !== roads.length;
+    const normalisedRoads = roads.map((road) => road.toLowerCase());
+    const signature = normalisedRoads.join("|");
+    const roadCounts = new Map();
+
+    for (const road of normalisedRoads) {
+      roadCounts.set(road, (roadCounts.get(road) || 0) + 1);
+    }
+
+    const hasUnexplainedRepeatedRoad = [...roadCounts].some(
+      ([road, count]) => count > 1 && !allowedRepeatedRoads.has(road),
+    );
+    const hasUnexplainedUTurn = routeSteps(candidate).some(
+      (step) =>
+        step.maneuver?.modifier === "uturn" &&
+        !allowedUTurnRoads.has(roadName(step).toLowerCase()),
+    );
 
     if (
       candidate.distance <= maximumUsefulDistance &&
       signature &&
       !selectedRoadSignatures.has(signature) &&
-      (!hasRepeatedRoad || directGeometries.has(candidate.geometry))
+      !hasUnexplainedRepeatedRoad &&
+      !hasUnexplainedUTurn
     ) {
       selectedCandidates.push(candidate);
-      selectedGeometries.add(candidate.geometry);
       selectedRoadSignatures.add(signature);
     }
 
     if (selectedCandidates.length === 4) break;
-  }
-
-  for (const candidate of orderedCandidates) {
-    if (
-      selectedCandidates.length < 4 &&
-      candidate.distance <= maximumUsefulDistance &&
-      !selectedGeometries.has(candidate.geometry)
-    ) {
-      selectedCandidates.push(candidate);
-      selectedGeometries.add(candidate.geometry);
-    }
-  }
-
-  for (const candidate of orderedCandidates) {
-    if (
-      selectedCandidates.length < 4 &&
-      !selectedGeometries.has(candidate.geometry)
-    ) {
-      selectedCandidates.push(candidate);
-      selectedGeometries.add(candidate.geometry);
-    }
   }
 
   const shortestCandidates = selectedCandidates
@@ -293,7 +402,39 @@ async function candidatesForRoute(route) {
     .slice(0, 4);
 
   if (shortestCandidates.length < 4) {
-    throw new Error(`Only found ${shortestCandidates.length} routes for ${route.id}`);
+    const discoveredSignatures = orderedCandidates
+      .map(
+        (candidate) => {
+          const candidateRoads = roadNames(candidate).map((road) =>
+            road.toLowerCase(),
+          );
+          const repeats =
+            new Set(candidateRoads).size !== candidateRoads.length;
+          const uturn = routeSteps(candidate).some(
+            (step) => step.maneuver?.modifier === "uturn",
+          );
+          const uturnDetails = routeSteps(candidate)
+            .filter((step) => step.maneuver?.modifier === "uturn")
+            .map(
+              (step) =>
+                `${roadName(step) || "(unnamed)"}:${Math.round(step.distance)}m`,
+            )
+            .join(",");
+          return `${(candidate.distance / 1000).toFixed(
+            2,
+          )} km · repeat=${repeats} uturn=${uturn}${
+            uturnDetails ? `(${uturnDetails})` : ""
+          } · ${roadNames(
+            candidate,
+          ).join(" → ")}`;
+        },
+      )
+      .filter(Boolean);
+    throw new Error(
+      `Only found ${shortestCandidates.length} distinct sensible routes for ${
+        route.id
+      }:\n${discoveredSignatures.join("\n")}`,
+    );
   }
 
   return shortestCandidates;
