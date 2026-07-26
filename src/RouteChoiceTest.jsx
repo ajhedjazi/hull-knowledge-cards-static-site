@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
 import routeOptionsData from "./data/routeOptions.generated.json";
+import { scoreRouteAnswer } from "./routeSpeechScore";
 
 const ROUTE_OPTION_STYLES = {
   A: { color: "#2f6fad", dashArray: null },
@@ -65,6 +66,7 @@ export default function RouteChoiceTest({
 }) {
   const [selectedOptionId, setSelectedOptionId] = useState("");
   const [choiceLocked, setChoiceLocked] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
   const optionSet = routeOptionsData[route.id];
   const options = useMemo(
     () =>
@@ -78,6 +80,7 @@ export default function RouteChoiceTest({
   useEffect(() => {
     setSelectedOptionId("");
     setChoiceLocked(false);
+    setVoiceTranscript("");
   }, [route.id]);
 
   const selectedOption = options.find(
@@ -91,6 +94,17 @@ export default function RouteChoiceTest({
   const distanceDifference = selectedOption
     ? selectedOption.distanceMetres - correctOption.distanceMetres
     : 0;
+  const voiceScore = useMemo(
+    () =>
+      revealed && selectedOption && voiceTranscript.trim()
+        ? scoreRouteAnswer(
+            voiceTranscript,
+            selectedOption,
+            route.endName,
+          )
+        : null,
+    [revealed, route.endName, selectedOption, voiceTranscript],
+  );
   const checklistItems = [
     { id: "streetNames", label: "Mentioned street names" },
     {
@@ -270,25 +284,28 @@ export default function RouteChoiceTest({
           </span>
           <div>
             <small>Your choice · Route {selectedOptionId}</small>
-            <h2>Now describe this route out loud</h2>
+            <h2>Give your route answer</h2>
             <p>
-              Imagine the course leader is listening. Name each road, count
-              junctions and explain every turn before revealing the answer.
+              Speak as though the course leader is listening. The microphone
+              will turn your answer into text ready for an automatic practice
+              score.
             </p>
           </div>
+          <VoiceAnswerRecorder
+            routeId={route.id}
+            transcript={voiceTranscript}
+            setTranscript={setVoiceTranscript}
+            reveal={() => setRevealed(true)}
+          />
           <button
             className="edit-plan"
-            onClick={() => setChoiceLocked(false)}
+            onClick={() => {
+              setVoiceTranscript("");
+              setChoiceLocked(false);
+            }}
             type="button"
           >
             Change my route
-          </button>
-          <button
-            className="primary reveal-route"
-            onClick={() => setRevealed(true)}
-            type="button"
-          >
-            Reveal shortest route and model answer
           </button>
         </div>
       )}
@@ -320,6 +337,16 @@ export default function RouteChoiceTest({
               </p>
             </div>
           </section>
+
+          {voiceScore && (
+            <VoiceScoreCard
+              route={route}
+              transcript={voiceTranscript}
+              score={voiceScore}
+              selectedOptionId={selectedOptionId}
+              correctOptionId={optionSet.correctOptionId}
+            />
+          )}
 
           <section className="route-comparison">
             <div className="route-comparison-heading">
@@ -414,6 +441,320 @@ export default function RouteChoiceTest({
           </div>
         </div>
       )}
+    </section>
+  );
+}
+
+function VoiceAnswerRecorder({
+  routeId,
+  transcript,
+  setTranscript,
+  reveal,
+}) {
+  const recognitionRef = useRef(null);
+  const finalTranscriptRef = useRef(transcript);
+  const [isListening, setIsListening] = useState(false);
+  const [interimTranscript, setInterimTranscript] = useState("");
+  const [speechError, setSpeechError] = useState("");
+  const speechSupported =
+    typeof window !== "undefined" &&
+    Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  useEffect(() => {
+    finalTranscriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(
+    () => () => {
+      recognitionRef.current?.abort();
+    },
+    [routeId],
+  );
+
+  function stopListening() {
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      // Recognition may already have stopped after a pause.
+    }
+    recognitionRef.current = null;
+    setIsListening(false);
+    setInterimTranscript("");
+  }
+
+  function startListening() {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setSpeechError(
+        "Voice transcription is not available in this browser. You can type or use your keyboard’s dictation button instead.",
+      );
+      return;
+    }
+
+    recognitionRef.current?.abort();
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-GB";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      let finalText = "";
+      let interimText = "";
+
+      for (
+        let resultIndex = event.resultIndex;
+        resultIndex < event.results.length;
+        resultIndex += 1
+      ) {
+        const result = event.results[resultIndex];
+        const text = result[0]?.transcript || "";
+
+        if (result.isFinal) {
+          finalText += ` ${text}`;
+        } else {
+          interimText += ` ${text}`;
+        }
+      }
+
+      if (finalText.trim()) {
+        const combinedTranscript =
+          `${finalTranscriptRef.current} ${finalText}`.trim();
+        finalTranscriptRef.current = combinedTranscript;
+        setTranscript(combinedTranscript);
+      }
+
+      setInterimTranscript(interimText.trim());
+    };
+
+    recognition.onerror = (event) => {
+      const messages = {
+        "not-allowed":
+          "Microphone access was blocked. Allow microphone access, then try again.",
+        "no-speech":
+          "No speech was heard. Move somewhere quieter and try again.",
+        network:
+          "The browser’s speech service could not connect. You can type your answer instead.",
+      };
+
+      setSpeechError(
+        messages[event.error] ||
+          "Voice transcription stopped unexpectedly. You can try again or type your answer.",
+      );
+      setIsListening(false);
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setInterimTranscript("");
+    };
+
+    try {
+      setSpeechError("");
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+    } catch {
+      setSpeechError(
+        "The microphone could not start. Wait a moment and try again.",
+      );
+      setIsListening(false);
+    }
+  }
+
+  return (
+    <section className="voice-answer" aria-label="Spoken route answer">
+      <div className="voice-controls">
+        <button
+          className={`voice-record ${isListening ? "is-listening" : ""}`}
+          type="button"
+          onClick={isListening ? stopListening : startListening}
+          disabled={!speechSupported}
+        >
+          <span aria-hidden="true">{isListening ? "■" : "●"}</span>
+          {isListening ? "Stop listening" : "Start microphone"}
+        </button>
+        {transcript && (
+          <button
+            className="voice-clear"
+            type="button"
+            onClick={() => {
+              finalTranscriptRef.current = "";
+              setTranscript("");
+              setInterimTranscript("");
+            }}
+          >
+            Clear answer
+          </button>
+        )}
+      </div>
+
+      {!speechSupported && (
+        <p className="voice-support-note">
+          This browser does not provide live speech transcription. Use the
+          microphone on your phone keyboard or type below.
+        </p>
+      )}
+
+      <label className="voice-transcript">
+        <span>Your transcript</span>
+        <textarea
+          value={transcript}
+          onChange={(event) => {
+            finalTranscriptRef.current = event.target.value;
+            setTranscript(event.target.value);
+          }}
+          placeholder="Your spoken route will appear here. You can correct any road name the microphone mishears."
+          rows="5"
+        />
+      </label>
+
+      {interimTranscript && (
+        <p className="voice-interim" aria-live="polite">
+          Listening: {interimTranscript}
+        </p>
+      )}
+      {speechError && (
+        <p className="voice-error" role="alert">
+          {speechError}
+        </p>
+      )}
+
+      <p className="voice-privacy">
+        The transcript stays in this page unless you choose to share it. Your
+        browser may use its own online speech service to recognise your voice.
+      </p>
+
+      <button
+        className="primary reveal-route"
+        onClick={() => {
+          stopListening();
+          reveal();
+        }}
+        type="button"
+      >
+        {transcript.trim()
+          ? "Reveal route and score my answer"
+          : "Reveal route without a voice score"}
+      </button>
+    </section>
+  );
+}
+
+function VoiceScoreCard({
+  route,
+  transcript,
+  score,
+  selectedOptionId,
+  correctOptionId,
+}) {
+  const [shareStatus, setShareStatus] = useState("");
+  const canShare =
+    typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  async function shareAssessment() {
+    const assessmentText = [
+      `Hull route assessment: ${route.startName} to ${route.endName}`,
+      `Candidate selected Route ${selectedOptionId}. Shortest route: Route ${correctOptionId}.`,
+      `Automatic practice score: ${score.total}% — ${score.label}.`,
+      `Road names heard: ${score.matchedRoads.join(", ") || "none"}.`,
+      score.missedRoads.length
+        ? `Road names not heard: ${score.missedRoads.join(", ")}.`
+        : "All route road names were heard.",
+      "",
+      `Transcript: ${transcript}`,
+      "",
+      "This is a revision score, not an official licensing assessment.",
+    ].join("\n");
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: `Route assessment: ${route.startName} to ${route.endName}`,
+          text: assessmentText,
+        });
+        setShareStatus("Share sheet opened.");
+      } else {
+        await navigator.clipboard.writeText(assessmentText);
+        setShareStatus("Assessment copied. Paste it into a message or email.");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        setShareStatus(
+          "Could not share automatically. Select and copy the transcript instead.",
+        );
+      }
+    }
+  }
+
+  return (
+    <section className="voice-score" aria-labelledby="voice-score-heading">
+      <div className="voice-score-summary">
+        <div
+          className={`voice-score-ring ${
+            score.total >= 85
+              ? "is-strong"
+              : score.total >= 70
+                ? "is-close"
+                : "is-practice"
+          }`}
+        >
+          <strong>{score.total}%</strong>
+          <small>practice score</small>
+        </div>
+        <div>
+          <small>Spoken-answer feedback</small>
+          <h2 id="voice-score-heading">{score.label}</h2>
+          <p>
+            This checks the roads, their order, turn language and destination.
+            It is useful practice, not an official pass or fail.
+          </p>
+        </div>
+      </div>
+
+      <div className="voice-score-breakdown">
+        <article>
+          <strong>{score.roadCoverage}%</strong>
+          <span>Road names</span>
+        </article>
+        <article>
+          <strong>{score.orderCoverage}%</strong>
+          <span>Correct order</span>
+        </article>
+        <article>
+          <strong>{score.directionCoverage}%</strong>
+          <span>Turn language</span>
+        </article>
+        <article>
+          <strong>{score.destinationMentioned ? "Yes" : "No"}</strong>
+          <span>Destination</span>
+        </article>
+      </div>
+
+      <ul className="voice-feedback-list">
+        {score.feedback.map((feedbackItem) => (
+          <li key={feedbackItem}>{feedbackItem}</li>
+        ))}
+      </ul>
+
+      <details className="voice-transcript-review">
+        <summary>Review my transcript</summary>
+        <p>{transcript}</p>
+      </details>
+
+      <div className="voice-share">
+        <button type="button" onClick={shareAssessment}>
+          {canShare ? "Share with course leader" : "Copy assessment"}
+        </button>
+        <p>
+          {canShare
+            ? "You choose the person and app from your phone’s share sheet; nothing sends automatically."
+            : "Copy the result, then paste it into a message or email."}
+        </p>
+        {shareStatus && <span aria-live="polite">{shareStatus}</span>}
+      </div>
     </section>
   );
 }

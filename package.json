@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/publish-static.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "generate:routes": "node scripts/generate-route-options.mjs",
+    "verify:routes": "node scripts/verify-route-options.mjs",
+    "verify:routes:live": "node scripts/verify-route-options.mjs --live",
+    "test:speech": "node scripts/test-route-speech-score.mjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

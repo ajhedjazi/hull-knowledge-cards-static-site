@@ -28,7 +28,8 @@ body {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button {
@@ -37,6 +38,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 .flashcard:focus-visible,
 .self-check input:focus-visible {
   outline-offset: 3px;
@@ -1150,10 +1152,309 @@ footer {
   text-decoration: underline;
 }
 
+.voice-answer {
+  color: #173d3a;
+  text-align: left;
+  background: #f7fbf9;
+  border: 1px solid #ffffff52;
+  border-radius: 18px;
+  gap: 12px;
+  width: min(680px, 100%);
+  margin-top: 5px;
+  padding: 16px;
+  display: grid;
+  box-shadow: 0 14px 34px #001d1b33;
+}
+
+.voice-controls {
+  flex-wrap: wrap;
+  gap: 8px;
+  display: flex;
+}
+
+.voice-record,
+.voice-clear {
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.voice-record {
+  color: #fff;
+  background: #0b675d;
+  border: 1px solid #0b675d;
+  align-items: center;
+  gap: 8px;
+  display: inline-flex;
+}
+
+.voice-record span {
+  color: #ffcbc0;
+  font-size: 0.72rem;
+}
+
+.voice-record.is-listening {
+  background: #a83e31;
+  border-color: #a83e31;
+  box-shadow: 0 0 0 4px #d95f4f2b;
+}
+
+.voice-record.is-listening span {
+  color: #fff;
+}
+
+.voice-record:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.voice-clear {
+  color: #385c58;
+  background: #fff;
+  border: 1px solid #c7d9d3;
+}
+
+.voice-transcript {
+  gap: 6px;
+  display: grid;
+}
+
+.voice-transcript > span {
+  color: #3f625f;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.voice-transcript textarea {
+  color: #173d3a;
+  resize: vertical;
+  background: #fff;
+  border: 1px solid #bcd1cb;
+  border-radius: 13px;
+  width: 100%;
+  min-height: 118px;
+  padding: 12px 13px;
+  line-height: 1.5;
+  box-shadow: inset 0 1px 3px #1432300a;
+}
+
+.voice-support-note,
+.voice-interim,
+.voice-error,
+.voice-privacy {
+  max-width: none !important;
+  margin: 0 !important;
+  font-size: 0.77rem;
+  line-height: 1.45 !important;
+}
+
+.voice-support-note {
+  color: #79500e !important;
+  background: #fff3cf;
+  border-radius: 10px;
+  padding: 9px 10px;
+}
+
+.voice-interim {
+  color: #185a54 !important;
+  font-weight: 750;
+}
+
+.voice-error {
+  color: #8c3026 !important;
+  background: #fff0ec;
+  border-radius: 10px;
+  padding: 9px 10px;
+}
+
+.voice-privacy {
+  color: #6a7d7a !important;
+}
+
+.voice-answer .reveal-route {
+  justify-self: stretch;
+  margin-top: 0;
+}
+
 .route-answer {
   gap: 15px;
   margin-top: 15px;
   display: grid;
+}
+
+.voice-score {
+  background: linear-gradient(145deg, #fff, #f1f8f5);
+  border: 1px solid #b9d7cc;
+  border-radius: 19px;
+  gap: 15px;
+  padding: 18px;
+  display: grid;
+}
+
+.voice-score-summary {
+  grid-template-columns: 98px 1fr;
+  align-items: center;
+  gap: 16px;
+  display: grid;
+}
+
+.voice-score-summary > div:last-child > small {
+  color: #a95e0a;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.voice-score-summary h2 {
+  color: #073b3a;
+  margin: 3px 0;
+  font-size: clamp(1.25rem, 3vw, 1.65rem);
+}
+
+.voice-score-summary p {
+  color: #506b68;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.voice-score-ring {
+  color: #fff;
+  background: #9d5b18;
+  border: 7px solid #f5d99b;
+  border-radius: 50%;
+  place-content: center;
+  width: 98px;
+  height: 98px;
+  text-align: center;
+  display: grid;
+}
+
+.voice-score-ring.is-strong {
+  background: #0b675d;
+  border-color: #aad9ca;
+}
+
+.voice-score-ring.is-close {
+  background: #a36a0d;
+  border-color: #f0d08d;
+}
+
+.voice-score-ring.is-practice {
+  background: #a54638;
+  border-color: #e7bbb1;
+}
+
+.voice-score-ring strong,
+.voice-score-ring small {
+  display: block;
+}
+
+.voice-score-ring strong {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.voice-score-ring small {
+  margin-top: 3px;
+  font-size: 0.58rem;
+}
+
+.voice-score-breakdown {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  display: grid;
+}
+
+.voice-score-breakdown article {
+  text-align: center;
+  background: #fff;
+  border: 1px solid #d2e0dc;
+  border-radius: 13px;
+  gap: 3px;
+  padding: 11px 8px;
+  display: grid;
+}
+
+.voice-score-breakdown strong {
+  color: #0b5c54;
+  font-size: 1.06rem;
+}
+
+.voice-score-breakdown span {
+  color: #647b78;
+  font-size: 0.67rem;
+  font-weight: 750;
+}
+
+.voice-feedback-list {
+  color: #354f4c;
+  background: #fff;
+  border: 1px solid #d2e0dc;
+  border-radius: 14px;
+  gap: 7px;
+  margin: 0;
+  padding: 13px 16px 13px 34px;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  display: grid;
+}
+
+.voice-transcript-review {
+  color: #365653;
+  background: #f8fbfa;
+  border: 1px solid #d2e0dc;
+  border-radius: 13px;
+  padding: 11px 13px;
+}
+
+.voice-transcript-review summary {
+  cursor: pointer;
+  color: #174b47;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.voice-transcript-review p {
+  white-space: pre-wrap;
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.voice-share {
+  grid-template-columns: max-content 1fr;
+  align-items: center;
+  gap: 5px 12px;
+  display: grid;
+}
+
+.voice-share button {
+  color: #fff;
+  background: #0b675d;
+  border: 1px solid #0b675d;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.voice-share p,
+.voice-share span {
+  color: #617875;
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.voice-share span {
+  color: #0b675d;
+  grid-column: 1 / -1;
+  font-weight: 800;
 }
 
 .route-result {
@@ -1459,6 +1760,28 @@ footer {
 
   .speak-prompt {
     padding: 24px 16px;
+  }
+
+  .voice-score-summary {
+    grid-template-columns: 76px 1fr;
+  }
+
+  .voice-score-ring {
+    border-width: 5px;
+    width: 76px;
+    height: 76px;
+  }
+
+  .voice-score-ring strong {
+    font-size: 1.1rem;
+  }
+
+  .voice-score-breakdown {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .voice-share {
+    grid-template-columns: 1fr;
   }
 
   .model-script {
