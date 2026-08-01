@@ -39,10 +39,12 @@ When a valid code is first entered on a device, the app stores the activation ti
 ### 3. Deploy to Render
 
 1. Push the completed `commercial-mvp` branch to GitHub.
-2. In the Render service settings, set the deploy branch to `commercial-mvp` for the validation environment.
-3. Use the existing build command: `npm run build`.
-4. Use the existing static publish output configured by the project.
+2. In the Render Static Site settings, set the deploy branch to `commercial-mvp` for the validation environment.
+3. Set the build command to `npm run build`.
+4. Set the publish directory to `dist`.
 5. Deploy and verify the landing page, checkout CTA, access-code flow, flashcards, practice mode, 30-question mock, score screen and answer review on a phone-sized viewport.
+
+The build also copies the generated static files to the repository root via `scripts/publish-static.mjs`, but Render can serve the normal Vite `dist` output directly.
 
 Do **not** point the validation service at `main` unless intentionally changing the production branch later.
 
