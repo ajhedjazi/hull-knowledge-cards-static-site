@@ -1,51 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import "leaflet/dist/leaflet.css";
-import { routes } from "./data/routes";
 import { venues } from "./data/venues";
-import RouteChoiceTest from "./RouteChoiceTest";
+import { buildQuiz, normaliseAnswer, shuffle } from "./lib/quiz";
 import "./App.css";
 
 const ALL_CATEGORIES = "All categories";
 const CARD_PROGRESS_KEY = "hull-knowledge-progress-v1";
-const ROUTE_PROGRESS_KEY = "hull-route-progress-v1";
-const EMPTY_CHECKLIST = {
-  streetNames: false,
-  endOfRoad: false,
-  junctionCounts: false,
-};
+const MOCK_QUESTION_COUNT = 30;
 
-function shuffle(items) {
-  const result = [...items];
-
-  for (let index = result.length - 1; index > 0; index -= 1) {
-    const randomIndex = Math.floor(Math.random() * (index + 1));
-    [result[index], result[randomIndex]] = [result[randomIndex], result[index]];
-  }
-
-  return result;
-}
-
-function normalise(value) {
-  return value
-    .toLowerCase()
-    .replace(/[’']/g, "")
-    .replace(
-      /\b(the|road|street|avenue|lane|way|drive|close)\b/g,
-      (word) => word,
-    )
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-function readSavedProgress(key) {
+function readSavedProgress() {
   if (typeof window === "undefined") return {};
 
   try {
-    return JSON.parse(window.localStorage.getItem(key) || "{}");
+    return JSON.parse(window.localStorage.getItem(CARD_PROGRESS_KEY) || "{}");
   } catch {
     return {};
   }
+}
+
+function cardKey(card) {
+  return `${card.venue}|${card.location}`;
 }
 
 export default function App() {
@@ -55,23 +28,18 @@ export default function App() {
   const [deck, setDeck] = useState(venues);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
-  const [progress, setProgress] = useState(() =>
-    readSavedProgress(CARD_PROGRESS_KEY),
-  );
+  const [progress, setProgress] = useState(readSavedProgress);
 
-  const [testDeck, setTestDeck] = useState([]);
-  const [testIndex, setTestIndex] = useState(0);
-  const [answer, setAnswer] = useState("");
-  const [feedback, setFeedback] = useState("idle");
-  const [testAnswers, setTestAnswers] = useState([]);
-  const [showSummary, setShowSummary] = useState(false);
+  const [practiceDeck, setPracticeDeck] = useState([]);
+  const [practiceIndex, setPracticeIndex] = useState(0);
+  const [practiceAnswer, setPracticeAnswer] = useState("");
+  const [practiceFeedback, setPracticeFeedback] = useState("idle");
+  const [practiceScore, setPracticeScore] = useState({ correct: 0, answered: 0 });
 
-  const [routeIndex, setRouteIndex] = useState(0);
-  const [routeRevealed, setRouteRevealed] = useState(false);
-  const [routeChecklist, setRouteChecklist] = useState(EMPTY_CHECKLIST);
-  const [routeProgress, setRouteProgress] = useState(() =>
-    readSavedProgress(ROUTE_PROGRESS_KEY),
-  );
+  const [mockDeck, setMockDeck] = useState([]);
+  const [mockIndex, setMockIndex] = useState(0);
+  const [mockAnswers, setMockAnswers] = useState([]);
+  const [mockComplete, setMockComplete] = useState(false);
 
   const categories = useMemo(
     () => [
@@ -105,20 +73,9 @@ export default function App() {
     try {
       window.localStorage.setItem(CARD_PROGRESS_KEY, JSON.stringify(progress));
     } catch {
-      // Progress remains available for this session if storage is unavailable.
+      // Keep progress in memory if local storage is unavailable.
     }
   }, [progress]);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        ROUTE_PROGRESS_KEY,
-        JSON.stringify(routeProgress),
-      );
-    } catch {
-      // Route progress remains available for this session.
-    }
-  }, [routeProgress]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -146,17 +103,12 @@ export default function App() {
   }, [mode, deck, currentIndex]);
 
   const current = deck[currentIndex];
-  const currentRoute = routes[routeIndex];
   const knownCount = Object.values(progress).filter(
     (value) => value === "known",
   ).length;
   const learningCount = Object.values(progress).filter(
     (value) => value === "learning",
   ).length;
-
-  function cardKey(card) {
-    return `${card.venue}|${card.location}`;
-  }
 
   function nextCard() {
     if (!deck.length) return;
@@ -196,111 +148,90 @@ export default function App() {
     }
   }
 
-  function startTest() {
+  function startPractice() {
     const source =
       category === ALL_CATEGORIES
         ? venues
         : venues.filter((card) => card.category === category);
 
-    const nextTest = shuffle(source)
-      .slice(0, Math.min(30, source.length))
-      .map((card) => {
-        const sameCategory = venues
-          .filter(
-            (candidate) =>
-              candidate.category === card.category &&
-              normalise(candidate.location) !== normalise(card.location),
-          )
-          .map((candidate) => candidate.location);
-        const allOtherLocations = venues
-          .filter(
-            (candidate) =>
-              normalise(candidate.location) !== normalise(card.location),
-          )
-          .map((candidate) => candidate.location);
-        const distractors = Array.from(
-          new Set([...shuffle(sameCategory), ...shuffle(allOtherLocations)]),
-        );
-
-        return {
-          card,
-          options: shuffle([card.location, ...distractors.slice(0, 2)]),
-        };
-      });
-
-    setTestDeck(nextTest);
-    setTestIndex(0);
-    setAnswer("");
-    setFeedback("idle");
-    setTestAnswers([]);
-    setShowSummary(false);
-    setMode("test");
+    setPracticeDeck(buildQuiz(source, venues, source.length));
+    setPracticeIndex(0);
+    setPracticeAnswer("");
+    setPracticeFeedback("idle");
+    setPracticeScore({ correct: 0, answered: 0 });
+    setMode("practice");
   }
 
-  function chooseAnswer(value) {
-    const question = testDeck[testIndex];
-    if (!question || feedback !== "idle") return;
+  function choosePracticeAnswer(value) {
+    const question = practiceDeck[practiceIndex];
+    if (!question || practiceFeedback !== "idle") return;
 
-    setAnswer(value);
-    setFeedback(
-      normalise(value) === normalise(question.card.location)
-        ? "correct"
-        : "wrong",
-    );
+    const correct =
+      normaliseAnswer(value) === normaliseAnswer(question.card.location);
+
+    setPracticeAnswer(value);
+    setPracticeFeedback(correct ? "correct" : "wrong");
+    setPracticeScore((score) => ({
+      correct: score.correct + (correct ? 1 : 0),
+      answered: score.answered + 1,
+    }));
   }
 
-  function continueTest() {
-    const question = testDeck[testIndex];
-    if (!question || feedback === "idle") return;
+  function nextPracticeQuestion() {
+    if (!practiceDeck.length) return;
 
-    const answers = [
-      ...testAnswers,
-      {
-        card: question.card,
-        given: answer,
-        correct: feedback === "correct",
-      },
-    ];
+    if (practiceIndex + 1 >= practiceDeck.length) {
+      setPracticeDeck(buildQuiz(
+        category === ALL_CATEGORIES
+          ? venues
+          : venues.filter((card) => card.category === category),
+        venues,
+        category === ALL_CATEGORIES
+          ? venues.length
+          : venues.filter((card) => card.category === category).length,
+      ));
+      setPracticeIndex(0);
+    } else {
+      setPracticeIndex((value) => value + 1);
+    }
 
-    setTestAnswers(answers);
+    setPracticeAnswer("");
+    setPracticeFeedback("idle");
+  }
 
-    if (testIndex + 1 >= testDeck.length) {
-      setShowSummary(true);
+  function startMock() {
+    setMockDeck(buildQuiz(venues, venues, MOCK_QUESTION_COUNT));
+    setMockIndex(0);
+    setMockAnswers([]);
+    setMockComplete(false);
+    setMode("mock");
+  }
+
+  function chooseMockAnswer(value) {
+    const question = mockDeck[mockIndex];
+    if (!question || mockComplete) return;
+
+    const answerRecord = {
+      card: question.card,
+      given: value,
+      correct:
+        normaliseAnswer(value) === normaliseAnswer(question.card.location),
+    };
+    const nextAnswers = [...mockAnswers, answerRecord];
+    setMockAnswers(nextAnswers);
+
+    if (mockIndex + 1 >= mockDeck.length) {
+      setMockComplete(true);
       return;
     }
 
-    setTestIndex((value) => value + 1);
-    setAnswer("");
-    setFeedback("idle");
-  }
-
-  function openRouteTest() {
-    setMode("route");
-    setRouteRevealed(false);
-    setRouteChecklist(EMPTY_CHECKLIST);
-  }
-
-  function toggleRouteCheck(item) {
-    setRouteChecklist((value) => ({
-      ...value,
-      [item]: !value[item],
-    }));
-  }
-
-  function assessRoute(status) {
-    setRouteProgress((value) => ({
-      ...value,
-      [currentRoute.id]: status,
-    }));
-    setRouteIndex((value) => (value + 1) % routes.length);
-    setRouteRevealed(false);
-    setRouteChecklist(EMPTY_CHECKLIST);
+    setMockIndex((value) => value + 1);
   }
 
   async function shareSite() {
     const shareData = {
       title: "Hull Knowledge Cards",
-      text: "Practise Hull taxi knowledge venues, tests and verbal routes.",
+      text: "Practise Hull venue knowledge with flashcards and quizzes.",
       url: window.location.href,
     };
 
@@ -319,10 +250,11 @@ export default function App() {
     <div className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">Hull taxi knowledge test</p>
+          <p className="eyebrow">Hull venue knowledge revision</p>
           <h1>Hull Knowledge Cards</h1>
           <p className="subtitle">
-            Learn all {venues.length} official venues, one tap at a time.
+            Flashcards, practice questions and a 30-question mock using the
+            existing venue list.
           </p>
         </div>
         <button
@@ -335,7 +267,7 @@ export default function App() {
         </button>
       </header>
 
-      <nav className="mode-tabs" aria-label="Study modes">
+      <nav className="mode-tabs" aria-label="Revision modes">
         <button
           className={mode === "study" ? "active" : ""}
           onClick={() => setMode("study")}
@@ -345,25 +277,25 @@ export default function App() {
           Flashcards
         </button>
         <button
-          className={mode === "test" ? "active" : ""}
-          onClick={startTest}
-          aria-pressed={mode === "test"}
+          className={mode === "practice" ? "active" : ""}
+          onClick={startPractice}
+          aria-pressed={mode === "practice"}
           type="button"
         >
-          30-card test
+          Practice
         </button>
         <button
-          className={mode === "route" ? "active" : ""}
-          onClick={openRouteTest}
-          aria-pressed={mode === "route"}
+          className={mode === "mock" ? "active" : ""}
+          onClick={startMock}
+          aria-pressed={mode === "mock"}
           type="button"
         >
-          Route Test
+          30-question mock
         </button>
       </nav>
 
       <main>
-        {mode !== "route" && (
+        {mode !== "mock" && (
           <section className="controls">
             <label>
               <span>Category</span>
@@ -397,7 +329,6 @@ export default function App() {
             index={currentIndex}
             flipped={flipped}
             progress={progress}
-            cardKey={cardKey}
             setFlipped={setFlipped}
             nextCard={nextCard}
             previousCard={previousCard}
@@ -409,40 +340,36 @@ export default function App() {
           />
         )}
 
-        {mode === "test" && (
-          <TestPanel
-            testDeck={testDeck}
-            testIndex={testIndex}
-            answer={answer}
-            feedback={feedback}
-            chooseAnswer={chooseAnswer}
-            continueTest={continueTest}
-            showSummary={showSummary}
-            testAnswers={testAnswers}
-            startTest={startTest}
+        {mode === "practice" && (
+          <PracticePanel
+            deck={practiceDeck}
+            index={practiceIndex}
+            answer={practiceAnswer}
+            feedback={practiceFeedback}
+            score={practiceScore}
+            chooseAnswer={choosePracticeAnswer}
+            nextQuestion={nextPracticeQuestion}
+            restart={startPractice}
           />
         )}
 
-        {mode === "route" && (
-          <RouteChoiceTest
-            route={currentRoute}
-            routeIndex={routeIndex}
-            routeCount={routes.length}
-            revealed={routeRevealed}
-            setRevealed={setRouteRevealed}
-            checklist={routeChecklist}
-            toggleCheck={toggleRouteCheck}
-            progressStatus={routeProgress[currentRoute.id]}
-            assessRoute={assessRoute}
+        {mode === "mock" && (
+          <MockPanel
+            deck={mockDeck}
+            index={mockIndex}
+            answers={mockAnswers}
+            complete={mockComplete}
+            chooseAnswer={chooseMockAnswer}
+            restart={startMock}
           />
         )}
       </main>
 
       <footer>
         <p>
-          Based on Hull City Council’s taxi driver application pack. Progress is
-          stored only on this device. Route models are for revision; always
-          check current road restrictions.
+          Independent revision resource. Not endorsed by Hull City Council.
+          Venue information should be checked against current official guidance.
+          Flashcard progress is stored only on this device.
         </p>
       </footer>
     </div>
@@ -455,7 +382,6 @@ function Flashcards({
   index,
   flipped,
   progress,
-  cardKey,
   setFlipped,
   nextCard,
   previousCard,
@@ -477,23 +403,15 @@ function Flashcards({
   return (
     <>
       <section className="stats-row">
-        <span>
-          <strong>{knownCount}</strong> known
-        </span>
-        <span>
-          <strong>{learningCount}</strong> learning
-        </span>
-        <span>
-          <strong>{venues.length - knownCount - learningCount}</strong> unmarked
-        </span>
+        <span><strong>{knownCount}</strong> known</span>
+        <span><strong>{learningCount}</strong> learning</span>
+        <span><strong>{venues.length - knownCount - learningCount}</strong> unmarked</span>
       </section>
 
       <section className="study-stage">
         <div className="card-topline">
           <span>{current.category}</span>
-          <span>
-            {index + 1} / {deck.length}
-          </span>
+          <span>{index + 1} / {deck.length}</span>
         </div>
 
         <div
@@ -536,114 +454,98 @@ function Flashcards({
         </div>
 
         <div className="nav-buttons">
-          <button
-            className="ghost icon"
-            onClick={previousCard}
-            aria-label="Previous card"
-            type="button"
-          >
-            ←
-          </button>
-          <button
-            className="learning"
-            onClick={() => markCard("learning")}
-            type="button"
-          >
-            Needs work
-          </button>
-          <button
-            className="known"
-            onClick={() => markCard("known")}
-            type="button"
-          >
-            Got it
-          </button>
-          <button
-            className="ghost icon"
-            onClick={nextCard}
-            aria-label="Next card"
-            type="button"
-          >
-            →
-          </button>
+          <button className="ghost icon" onClick={previousCard} aria-label="Previous card" type="button">←</button>
+          <button className="learning" onClick={() => markCard("learning")} type="button">Needs work</button>
+          <button className="known" onClick={() => markCard("known")} type="button">Got it</button>
+          <button className="ghost icon" onClick={nextCard} aria-label="Next card" type="button">→</button>
         </div>
 
         <div className="secondary-actions">
-          <button className="text-button" onClick={randomiseDeck} type="button">
-            Shuffle cards
-          </button>
-          <button
-            className="text-button danger-text"
-            onClick={resetProgress}
-            type="button"
-          >
-            Reset progress
-          </button>
+          <button className="text-button" onClick={randomiseDeck} type="button">Shuffle cards</button>
+          <button className="text-button danger-text" onClick={resetProgress} type="button">Reset progress</button>
         </div>
-        <p className="shortcuts">
-          Keyboard: space to flip · ←/→ to move · C = got it · X = needs work
-        </p>
+        <p className="shortcuts">Keyboard: space to flip · ←/→ to move · C = got it · X = needs work</p>
       </section>
     </>
   );
 }
 
-function TestPanel({
-  testDeck,
-  testIndex,
+function PracticePanel({
+  deck,
+  index,
   answer,
   feedback,
+  score,
   chooseAnswer,
-  continueTest,
-  showSummary,
-  testAnswers,
-  startTest,
+  nextQuestion,
+  restart,
 }) {
-  const question = testDeck[testIndex];
+  const question = deck[index];
 
   if (!question) {
-    return <div className="empty">Choose “30-card test” to begin.</div>;
+    return (
+      <section className="test-panel empty-state">
+        <p>No practice questions are available for this category.</p>
+        <button className="primary" onClick={restart} type="button">Restart practice</button>
+      </section>
+    );
   }
 
-  if (showSummary) {
-    const correctCount = testAnswers.filter((item) => item.correct).length;
-    const percentage = Math.round((correctCount / testDeck.length) * 100);
+  return (
+    <section className="test-panel">
+      <div className="card-topline">
+        <span>{question.card.category}</span>
+        <span>{score.correct} correct · {score.answered} answered</span>
+      </div>
+
+      <QuestionPrompt question={question} />
+      <ChoiceList
+        question={question}
+        answer={answer}
+        feedback={feedback}
+        onChoose={chooseAnswer}
+      />
+
+      {feedback !== "idle" && (
+        <div className={`feedback choice-feedback ${feedback}`} aria-live="polite">
+          <div>
+            <strong>{feedback === "correct" ? "Correct" : "Not quite"}</strong>
+            {feedback === "wrong" && <span>The answer is {question.card.location}.</span>}
+          </div>
+          <button className="primary" onClick={nextQuestion} type="button">Next question</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MockPanel({ deck, index, answers, complete, chooseAnswer, restart }) {
+  const question = deck[index];
+
+  if (!question) {
+    return <div className="empty">Starting your mock…</div>;
+  }
+
+  if (complete) {
+    const correctCount = answers.filter((item) => item.correct).length;
+    const percentage = Math.round((correctCount / deck.length) * 100);
 
     return (
       <section className="test-panel summary-panel">
-        <p className="eyebrow">Test complete</p>
-        <h2>
-          {correctCount} / {testDeck.length}
-        </h2>
-        <div className="score-ring">
-          <span>{percentage}%</span>
-        </div>
-        <p className={percentage >= 80 ? "pass-message" : "retry-message"}>
-          {percentage >= 80
-            ? "Pass — you reached the 80% target."
-            : "Not quite — you need 24 out of 30 to pass."}
-        </p>
-        <button className="primary" onClick={startTest} type="button">
-          Try another 30
-        </button>
+        <p className="eyebrow">Mock complete</p>
+        <h2>{correctCount} / {deck.length}</h2>
+        <div className="score-ring"><span>{percentage}%</span></div>
+        <p className="result-copy">Use the review below to decide what to revisit before trying another mock.</p>
+        <button className="primary" onClick={restart} type="button">Try another mock</button>
 
-        <details open={percentage < 80}>
+        <details>
           <summary>Review answers</summary>
           <div className="review-list">
-            {testAnswers.map((item, itemIndex) => (
-              <div
-                className={`review-item ${
-                  item.correct ? "correct" : "incorrect"
-                }`}
-                key={`${item.card.venue}-${itemIndex}`}
-              >
-                <strong>
-                  {itemIndex + 1}. {item.card.venue}
-                </strong>
-                <span>Your answer: {item.given || "Not answered"}</span>
-                {!item.correct && (
-                  <span>Correct answer: {item.card.location}</span>
-                )}
+            {answers.map((item, itemIndex) => (
+              <div className={`review-item ${item.correct ? "correct" : "incorrect"}`} key={`${item.card.venue}-${itemIndex}`}>
+                <strong>{itemIndex + 1}. {item.card.venue}</strong>
+                <span>Your answer: {item.given}</span>
+                {!item.correct && <span>Correct answer: {item.card.location}</span>}
               </div>
             ))}
           </div>
@@ -655,89 +557,62 @@ function TestPanel({
   return (
     <section className="test-panel">
       <div className="card-topline">
-        <span>{question.card.category}</span>
-        <span>
-          {testIndex + 1} / {testDeck.length}
-        </span>
+        <span>30-question mock</span>
+        <span>{index + 1} / {deck.length}</span>
       </div>
 
-      <div className="test-question multiple-choice-question">
-        <small>Which location is correct for…</small>
-        <h2>{question.card.venue}</h2>
+      <QuestionPrompt question={question} />
+      <ChoiceList question={question} answer="" feedback="idle" onChoose={chooseAnswer} />
+
+      <div className="test-progress" aria-label={`Question ${index + 1} of ${deck.length}`}>
+        <span style={{ width: `${((index + 1) / deck.length) * 100}%` }} />
       </div>
-
-      <div
-        className="choice-list"
-        role="radiogroup"
-        aria-label={`Choose the location for ${question.card.venue}`}
-      >
-        {question.options.map((option, optionIndex) => {
-          const isCorrect =
-            normalise(option) === normalise(question.card.location);
-          const isSelected = normalise(option) === normalise(answer);
-
-          return (
-            <button
-              type="button"
-              className={`choice-button ${
-                feedback === "idle"
-                  ? ""
-                  : isCorrect
-                    ? "choice-correct"
-                    : isSelected
-                      ? "choice-wrong"
-                      : "choice-muted"
-              }`}
-              onClick={() => chooseAnswer(option)}
-              disabled={feedback !== "idle"}
-              aria-pressed={isSelected}
-              key={`${option}-${optionIndex}`}
-            >
-              <span className="choice-letter">
-                {String.fromCharCode(65 + optionIndex)}
-              </span>
-              <span>{option}</span>
-              {feedback !== "idle" && isCorrect && (
-                <strong aria-label="Correct answer">✓</strong>
-              )}
-              {feedback === "wrong" && isSelected && (
-                <strong aria-label="Incorrect answer">×</strong>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {feedback !== "idle" && (
-        <div
-          className={`feedback choice-feedback ${feedback}`}
-          aria-live="polite"
-        >
-          <div>
-            <strong>
-              {feedback === "correct" ? "Correct!" : "Not quite."}
-            </strong>
-            {feedback === "wrong" && (
-              <span>The correct answer is {question.card.location}.</span>
-            )}
-          </div>
-          <button className="primary" onClick={continueTest} type="button">
-            {testIndex + 1 === testDeck.length
-              ? "See results"
-              : "Next question"}
-          </button>
-        </div>
-      )}
-
-      <div
-        className="test-progress"
-        aria-label={`Question ${testIndex + 1} of ${testDeck.length}`}
-      >
-        <span
-          style={{ width: `${((testIndex + 1) / testDeck.length) * 100}%` }}
-        />
-      </div>
-      <p className="test-target">Pass target: 24 out of 30</p>
+      <p className="mock-note">Answers are scored at the end. No pass mark is assumed.</p>
     </section>
+  );
+}
+
+function QuestionPrompt({ question }) {
+  return (
+    <div className="test-question multiple-choice-question">
+      <small>Which location is correct for…</small>
+      <h2>{question.card.venue}</h2>
+    </div>
+  );
+}
+
+function ChoiceList({ question, answer, feedback, onChoose }) {
+  return (
+    <div className="choice-list" role="radiogroup" aria-label={`Choose the location for ${question.card.venue}`}>
+      {question.options.map((option, optionIndex) => {
+        const isCorrect =
+          normaliseAnswer(option) === normaliseAnswer(question.card.location);
+        const isSelected = normaliseAnswer(option) === normaliseAnswer(answer);
+
+        return (
+          <button
+            type="button"
+            className={`choice-button ${
+              feedback === "idle"
+                ? ""
+                : isCorrect
+                  ? "choice-correct"
+                  : isSelected
+                    ? "choice-wrong"
+                    : "choice-muted"
+            }`}
+            onClick={() => onChoose(option)}
+            disabled={feedback !== "idle"}
+            aria-pressed={isSelected}
+            key={`${option}-${optionIndex}`}
+          >
+            <span className="choice-letter">{String.fromCharCode(65 + optionIndex)}</span>
+            <span>{option}</span>
+            {feedback !== "idle" && isCorrect && <strong aria-label="Correct answer">✓</strong>}
+            {feedback === "wrong" && isSelected && <strong aria-label="Incorrect answer">×</strong>}
+          </button>
+        );
+      })}
+    </div>
   );
 }
