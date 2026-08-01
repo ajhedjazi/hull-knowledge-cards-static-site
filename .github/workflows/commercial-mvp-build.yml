@@ -1,0 +1,64 @@
+name: Verify commercial MVP
+
+on:
+  push:
+    branches:
+      - commercial-mvp
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies and refresh lockfile
+        run: npm install
+
+      - name: Smoke-test quiz generation
+        run: |
+          node --input-type=module <<'NODE'
+          import { venues } from './src/data/venues.js';
+          import { buildQuiz, normaliseAnswer } from './src/lib/quiz.js';
+
+          if (venues.length < 30) throw new Error('Expected at least 30 venue records');
+
+          const mock = buildQuiz(venues, venues, 30);
+          if (mock.length !== 30) throw new Error(`Expected 30 mock questions, got ${mock.length}`);
+
+          for (const question of mock) {
+            if (question.options.length < 2) throw new Error(`Too few options for ${question.card.venue}`);
+            const correctMatches = question.options.filter(
+              (option) => normaliseAnswer(option) === normaliseAnswer(question.card.location),
+            );
+            if (correctMatches.length !== 1) {
+              throw new Error(`Expected exactly one correct option for ${question.card.venue}`);
+            }
+          }
+
+          console.log(`Quiz smoke test passed with ${venues.length} venue records and ${mock.length} mock questions.`);
+          NODE
+
+      - name: Build production site
+        run: npm run build
+
+      - name: Commit refreshed lockfile and generated static build
+        run: |
+          rm .github/workflows/commercial-mvp-build.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- package-lock.json index.html assets .github/workflows/commercial-mvp-build.yml
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit."
+          else
+            git commit -m "Build commercial MVP"
+            git push origin HEAD:commercial-mvp
+          fi
