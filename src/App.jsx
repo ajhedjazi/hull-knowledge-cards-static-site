@@ -1,55 +1,68 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import RevisionApp from "./RevisionApp";
-import { ACCESS_CODES } from "./config/accessCodes";
 import { PRODUCT } from "./config/product";
 import "./App.css";
 
-const ACCESS_STORAGE_KEY = "hull-knowledge-access-v1";
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
 
-function readAccessRecord() {
-  if (typeof window === "undefined") return null;
-
+  let body = {};
   try {
-    const stored = JSON.parse(window.localStorage.getItem(ACCESS_STORAGE_KEY) || "null");
-    if (!stored?.activatedAt || !stored?.expiresAt) return null;
-    return stored;
+    body = await response.json();
   } catch {
-    return null;
+    // Keep a generic error if the server did not return JSON.
   }
+
+  return { response, body };
 }
 
-function getInitialAccessState() {
-  const record = readAccessRecord();
-  if (!record) return { status: "none", record: null };
-
-  return {
-    status: Date.now() < new Date(record.expiresAt).getTime() ? "active" : "expired",
-    record,
-  };
-}
-
-function saveAccessRecord(record) {
-  try {
-    window.localStorage.setItem(ACCESS_STORAGE_KEY, JSON.stringify(record));
-  } catch {
-    // Access still works for the current session if storage is unavailable.
-  }
-}
-
-function normaliseCode(value) {
-  return value.trim().toUpperCase();
+function formatAccessDate(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(value));
 }
 
 export default function App() {
-  const [initialAccess] = useState(getInitialAccessState);
-  const [screen, setScreen] = useState(
-    initialAccess.status === "expired" ? "expired" : initialAccess.status === "active" ? "app" : "landing",
-  );
-  const [accessRecord, setAccessRecord] = useState(initialAccess.record);
-  const [accessCode, setAccessCode] = useState("");
-  const [accessError, setAccessError] = useState("");
+  const [screen, setScreen] = useState("loading");
+  const [user, setUser] = useState(null);
   const [checkoutMessage, setCheckoutMessage] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    apiRequest("/api/auth/session", { method: "GET", headers: {} })
+      .then(({ response, body }) => {
+        if (cancelled) return;
+        if (response.ok && body?.user) {
+          setUser(body.user);
+          setScreen("app");
+          return;
+        }
+        if (response.status === 403 && body?.authenticated) {
+          setUser(body.accessExpiresAt ? { accessExpiresAt: body.accessExpiresAt } : null);
+          setScreen("expired");
+          return;
+        }
+        setUser(null);
+        setScreen("landing");
+      })
+      .catch(() => {
+        if (!cancelled) setScreen("landing");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function openCheckout() {
     if (PRODUCT.checkoutUrl) {
@@ -64,74 +77,97 @@ export default function App() {
     );
   }
 
-  function showAccessScreen() {
-    setAccessError("");
-    setAccessCode("");
-    setScreen("access");
+  async function logout() {
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST", body: "{}" });
+    } finally {
+      setUser(null);
+      setScreen("landing");
+    }
   }
 
-  function continueWithExistingAccess() {
-    if (accessRecord && Date.now() < new Date(accessRecord.expiresAt).getTime()) {
-      setScreen("app");
-      return;
-    }
-
-    showAccessScreen();
-  }
-
-  function submitAccessCode(event) {
-    event.preventDefault();
-    const candidate = normaliseCode(accessCode);
-    const valid = ACCESS_CODES.some((code) => normaliseCode(code) === candidate);
-
-    if (!valid) {
-      setAccessError("That access code was not recognised. Check it and try again.");
-      return;
-    }
-
-    const activatedAt = new Date();
-    const expiresAt = new Date(
-      activatedAt.getTime() + PRODUCT.accessDays * DAY_IN_MS,
-    );
-    const record = {
-      activatedAt: activatedAt.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-    };
-
-    saveAccessRecord(record);
-    setAccessRecord(record);
-    setAccessError("");
-    setAccessCode("");
-    setScreen("app");
-  }
-
-  if (screen === "app") {
-    const isExpired =
-      !accessRecord || Date.now() >= new Date(accessRecord.expiresAt).getTime();
-
-    if (isExpired) {
-      return <ExpiredScreen onCheckout={openCheckout} checkoutMessage={checkoutMessage} />;
-    }
-
+  if (screen === "loading") {
     return (
-      <RevisionApp
-        accessExpiresAt={accessRecord.expiresAt}
-        onHome={() => setScreen("landing")}
+      <div className="commercial-shell centred-shell">
+        <main className="access-card">
+          <p className="eyebrow">Hull Knowledge Cards</p>
+          <h1>Checking access…</h1>
+        </main>
+      </div>
+    );
+  }
+
+  if (screen === "app" && user) {
+    return (
+      <>
+        <div
+          aria-label="Account controls"
+          style={{
+            position: "fixed",
+            right: "12px",
+            bottom: "12px",
+            zIndex: 30,
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            maxWidth: "calc(100vw - 24px)",
+            padding: "9px 11px",
+            color: "#173f3c",
+            background: "rgba(255,253,248,.96)",
+            border: "1px solid #cbdad5",
+            borderRadius: "12px",
+            boxShadow: "0 8px 24px #1432301c",
+            fontSize: ".76rem",
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {user.email} · until {formatAccessDate(user.accessExpiresAt)}
+          </span>
+          <button className="text-button" onClick={logout} type="button">Sign out</button>
+        </div>
+        <RevisionApp
+          accessExpiresAt={user.accessExpiresAt}
+          onHome={() => setScreen("landing")}
+        />
+      </>
+    );
+  }
+
+  if (screen === "access-choice") {
+    return (
+      <AccessChoiceScreen
+        onBack={() => setScreen("landing")}
+        onRedeem={() => setScreen("redeem")}
+        onSignIn={() => setScreen("login")}
       />
     );
   }
 
-  if (screen === "access") {
+  if (screen === "redeem") {
     return (
-      <AccessScreen
-        code={accessCode}
-        error={accessError}
-        onBack={() => setScreen("landing")}
-        onChange={(event) => {
-          setAccessCode(event.target.value);
-          if (accessError) setAccessError("");
+      <RedeemScreen
+        onBack={() => setScreen("access-choice")}
+        onSignedIn={(nextUser) => {
+          setUser(nextUser);
+          setScreen("app");
         }}
-        onSubmit={submitAccessCode}
+        onSignIn={() => setScreen("login")}
+      />
+    );
+  }
+
+  if (screen === "login") {
+    return (
+      <LoginScreen
+        onBack={() => setScreen("access-choice")}
+        onSignedIn={(nextUser) => {
+          setUser(nextUser);
+          setScreen("app");
+        }}
+        onExpired={(accessExpiresAt) => {
+          setUser({ accessExpiresAt });
+          setScreen("expired");
+        }}
       />
     );
   }
@@ -142,11 +178,12 @@ export default function App() {
 
   return (
     <LandingScreen
-      hasAccess={
-        accessRecord && Date.now() < new Date(accessRecord.expiresAt).getTime()
-      }
+      hasAccess={Boolean(user?.email)}
       onCheckout={openCheckout}
-      onExistingAccess={continueWithExistingAccess}
+      onExistingAccess={() => {
+        if (user?.email) setScreen("app");
+        else setScreen("access-choice");
+      }}
       checkoutMessage={checkoutMessage}
     />
   );
@@ -195,37 +232,183 @@ function LandingScreen({ hasAccess, onCheckout, onExistingAccess, checkoutMessag
   );
 }
 
-function AccessScreen({ code, error, onBack, onChange, onSubmit }) {
+function AccessChoiceScreen({ onBack, onRedeem, onSignIn }) {
   return (
     <div className="commercial-shell centred-shell">
       <main className="access-card">
-        <button className="text-button back-link" onClick={onBack} type="button">
-          ← Back
-        </button>
+        <button className="text-button back-link" onClick={onBack} type="button">← Back</button>
         <p className="eyebrow">Existing customer</p>
-        <h1>Enter your access code</h1>
+        <h1>Access your revision</h1>
+        <p className="access-copy">Activate a new purchase once, or sign in to an account you have already created.</p>
+        <div className="access-form">
+          <button className="primary commercial-cta" onClick={onRedeem} type="button">Redeem access code</button>
+          <button className="secondary-cta" onClick={onSignIn} type="button">Sign in</button>
+        </div>
+        <p className="commercial-disclaimer compact-disclaimer">{PRODUCT.disclaimer}</p>
+      </main>
+    </div>
+  );
+}
+
+function RedeemScreen({ onBack, onSignedIn, onSignIn }) {
+  const [step, setStep] = useState("code");
+  const [code, setCode] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function validateCode(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const { response, body } = await apiRequest("/api/access-codes/validate", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      });
+      if (response.ok) {
+        setStep("account");
+        return;
+      }
+      setError(body.message || "That access code could not be validated.");
+    } catch {
+      setError("We could not check that code. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createAccount(event) {
+    event.preventDefault();
+    setError("");
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const { response, body } = await apiRequest("/api/auth/redeem", {
+        method: "POST",
+        body: JSON.stringify({ code, email, password }),
+      });
+      if (response.ok && body.user) {
+        onSignedIn(body.user);
+        return;
+      }
+      setError(body.message || "We could not activate your access. Please try again.");
+    } catch {
+      setError("We could not activate your access. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="commercial-shell centred-shell">
+      <main className="access-card">
+        <button className="text-button back-link" onClick={onBack} type="button">← Back</button>
+        <p className="eyebrow">Activate access</p>
+        <h1>{step === "code" ? "Enter your access code" : "Create your account"}</h1>
         <p className="access-copy">
-          Enter the code you were given after purchase to open your revision materials on this device.
+          {step === "code"
+            ? "Enter the code you were given after purchase. Each code can be activated once."
+            : `Your ${PRODUCT.accessDays}-day access period starts when this account is created.`}
         </p>
 
-        <form className="access-form" onSubmit={onSubmit}>
-          <label htmlFor="access-code">Access code</label>
-          <input
-            id="access-code"
-            name="access-code"
-            value={code}
-            onChange={onChange}
-            autoComplete="one-time-code"
-            autoCapitalize="characters"
-            spellCheck="false"
-            inputMode="text"
-            placeholder="Enter code"
-            autoFocus
-          />
-          {error && <p className="access-error" role="alert">{error}</p>}
-          <button className="primary commercial-cta" type="submit">Open revision app</button>
-        </form>
+        {step === "code" ? (
+          <form className="access-form" onSubmit={validateCode}>
+            <label htmlFor="access-code">Access code</label>
+            <input
+              id="access-code"
+              value={code}
+              onChange={(event) => { setCode(event.target.value); setError(""); }}
+              autoComplete="one-time-code"
+              autoCapitalize="characters"
+              spellCheck="false"
+              placeholder="Enter code"
+              required
+              autoFocus
+            />
+            {error && <p className="access-error" role="alert">{error}</p>}
+            <button className="primary commercial-cta" disabled={busy} type="submit">
+              {busy ? "Checking…" : "Continue"}
+            </button>
+            <button className="text-button" onClick={onSignIn} type="button">Already activated? Sign in</button>
+          </form>
+        ) : (
+          <form className="access-form" onSubmit={createAccount}>
+            <label htmlFor="redeem-email">Email</label>
+            <input id="redeem-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" required autoFocus />
+            <label htmlFor="redeem-password">Password</label>
+            <input id="redeem-password" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete="new-password" minLength="8" required />
+            <label htmlFor="redeem-confirm">Confirm password</label>
+            <input id="redeem-confirm" type="password" value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); setError(""); }} autoComplete="new-password" minLength="8" required />
+            {error && <p className="access-error" role="alert">{error}</p>}
+            <button className="primary commercial-cta" disabled={busy} type="submit">
+              {busy ? "Creating account…" : "Create account & start access"}
+            </button>
+          </form>
+        )}
 
+        <p className="commercial-disclaimer compact-disclaimer">{PRODUCT.disclaimer}</p>
+      </main>
+    </div>
+  );
+}
+
+function LoginScreen({ onBack, onSignedIn, onExpired }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const { response, body } = await apiRequest("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      if (response.ok && body.user) {
+        onSignedIn(body.user);
+        return;
+      }
+      if (response.status === 403 && body.code === "ACCESS_EXPIRED") {
+        onExpired(body.accessExpiresAt);
+        return;
+      }
+      setError(body.message || "Email or password is incorrect.");
+    } catch {
+      setError("We could not sign you in. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="commercial-shell centred-shell">
+      <main className="access-card">
+        <button className="text-button back-link" onClick={onBack} type="button">← Back</button>
+        <p className="eyebrow">Customer account</p>
+        <h1>Sign in</h1>
+        <p className="access-copy">Use the email and password you set when you activated your access code.</p>
+        <form className="access-form" onSubmit={submit}>
+          <label htmlFor="login-email">Email</label>
+          <input id="login-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" required autoFocus />
+          <label htmlFor="login-password">Password</label>
+          <input id="login-password" type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(""); }} autoComplete="current-password" required />
+          {error && <p className="access-error" role="alert">{error}</p>}
+          <button className="primary commercial-cta" disabled={busy} type="submit">{busy ? "Signing in…" : "Sign in"}</button>
+        </form>
         <p className="commercial-disclaimer compact-disclaimer">{PRODUCT.disclaimer}</p>
       </main>
     </div>
@@ -238,12 +421,8 @@ function ExpiredScreen({ onCheckout, checkoutMessage }) {
       <main className="access-card expired-card">
         <p className="eyebrow">Hull Knowledge Cards</p>
         <h1>Your access period has ended.</h1>
-        <p className="access-copy">
-          Your {PRODUCT.accessDays}-day access window has finished.
-        </p>
-        <button className="primary commercial-cta" onClick={onCheckout} type="button">
-          Get Access
-        </button>
+        <p className="access-copy">Your {PRODUCT.accessDays}-day access window has finished.</p>
+        <button className="primary commercial-cta" onClick={onCheckout} type="button">Get Access</button>
         {checkoutMessage && <p className="checkout-message" role="status">{checkoutMessage}</p>}
         <p className="commercial-disclaimer compact-disclaimer">{PRODUCT.disclaimer}</p>
       </main>
