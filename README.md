@@ -1,61 +1,126 @@
-# Hull Knowledge Cards
+# Hull Knowledge Cards — commercial MVP
 
-Independent Hull taxi knowledge revision built as a mobile-first React/Vite app.
+This branch is the five-customer validation build. It keeps the existing Stripe Payment Link and revision product, but replaces reusable client-side access codes with server-backed accounts and single-use code redemption.
 
-## Validation stage
+## Architecture
 
-- Initial price: **£19.99**
-- Initial access: **90 days**
-- First commercial milestone: **five unrelated paying customers**
-- Payments use an external **Stripe Payment Link**
-- Access codes are issued manually
-- The current access gate is deliberately lightweight
-- Do not add full authentication until demand is validated
+- Vite/React frontend (existing product UI and revision logic)
+- Minimal Node HTTP server using only Node built-ins
+- SQLite via `node:sqlite`
+- Passwords hashed with Node `crypto.scrypt` and unique random salts
+- Random authenticated sessions stored server-side; browser receives only an HTTP-only session cookie
+- One Render Web Service serves both `/api/*` and the built frontend
+- SQLite database stored on a Render persistent disk
 
-The client-side access-code gate is temporary validation infrastructure, not secure DRM. If the product validates, replace it with proper server-side authentication and entitlement checks.
+The server imports `PRODUCT.accessDays` from `src/config/product.js`, so the 90-day duration has one central product configuration value. Stripe remains the existing Payment Link; there is no Stripe API/webhook integration in this MVP.
 
-## Launch configuration
+## Required environment
 
-### 1. Add the Stripe Payment Link
+Copy `.env.example` for local reference. The server reads environment variables directly; no dotenv package is required.
 
-Open `src/config/product.js` and set `checkoutUrl` to the real Stripe Payment Link supplied from the Stripe dashboard:
+- `DATABASE_PATH` — SQLite path. Local default is `./data/hkc.sqlite`; on Render use `/var/data/hkc.sqlite`.
+- `ACCESS_CODE_SEED` — comma-separated codes used only when running the seed command. Do **not** put this in a `VITE_*` variable or commit real codes.
+- `PORT` — supplied automatically by Render; local default is `3000`.
+- `NODE_ENV=production` — enables the Secure flag on session cookies.
 
-```js
-checkoutUrl: "https://buy.stripe.com/...",
+Node 22.5+ is required because this MVP uses the built-in `node:sqlite` module.
+
+## Local setup
+
+```bash
+npm ci
+npm run build
+ACCESS_CODE_SEED="CODE-ONE,CODE-TWO" npm run codes -- seed
+npm start
 ```
 
-Do not commit Stripe secret keys. This MVP only needs the public Payment Link URL.
+Open `http://localhost:3000`. The database schema is initialised automatically on server start or whenever the access-code CLI opens the database.
 
-If `checkoutUrl` is empty, development mode shows a clear configuration message instead of navigating to a broken URL. Production shows a neutral checkout-unavailable message.
+## Access-code operations
 
-### 2. Create or change temporary access codes
+Real access codes are intentionally **not** stored in frontend JavaScript or committed source. For the current launch, configure `ACCESS_CODE_SEED` privately with the existing ten validation codes and run the seed command once against the production database.
 
-Open `src/config/accessCodes.js` and replace the obvious placeholder values with the manually issued validation codes you intend to give customers.
+Seed codes (safe to re-run; existing rows are unchanged):
 
-Keep codes unique and easy to communicate. These values are shipped in the browser bundle, so they must not be treated as secrets or as a durable authentication system.
+```bash
+ACCESS_CODE_SEED="code1,code2,..." npm run codes -- seed
+```
 
-When a valid code is first entered on a device, the app stores the activation timestamp and calculated expiry on that device. The expiry duration comes from `PRODUCT.accessDays` in `src/config/product.js`.
+Add a new code:
 
-### 3. Deploy to Render
+```bash
+npm run codes -- add HKC-EXAMPLE-1234
+```
 
-1. Push the completed `commercial-mvp` branch to GitHub.
-2. In the Render Static Site settings, set the deploy branch to `commercial-mvp` for the validation environment.
-3. Set the build command to `npm run build`.
-4. Set the publish directory to `dist`.
-5. Deploy and verify the landing page, checkout CTA, access-code flow, flashcards, practice mode, 30-question mock, score screen and answer review on a phone-sized viewport.
+Inspect all codes and redemption state:
 
-The build also copies the generated static files to the repository root via `scripts/publish-static.mjs`, but Render can serve the normal Vite `dist` output directly.
+```bash
+npm run codes -- status
+```
 
-Do **not** point the validation service at `main` unless intentionally changing the production branch later.
+Inspect one code:
 
-### 4. Revoke an access code for future activations
+```bash
+npm run codes -- status HKC-EXAMPLE-1234
+```
 
-Remove that code from `src/config/accessCodes.js` and redeploy.
+Revoke an **unused** code:
 
-This prevents **future activations** using that code. It does not remotely revoke a device that already activated successfully, because this validation MVP stores the entitlement locally and has no server-side account system.
+```bash
+npm run codes -- revoke HKC-EXAMPLE-1234
+```
 
-## Commercial copy guardrails
+The revoke command refuses to revoke an already redeemed code. These commands should be run from a Render Shell so they operate on the persistent production database at `DATABASE_PATH`.
+
+## Render deployment
+
+This branch includes `render.yaml` for one Node Web Service with a 1 GB persistent disk.
+
+1. Deploy **only** the `commercial-mvp` branch. Do not merge it into `main` for this validation.
+2. Create/use the service from `render.yaml`, or configure equivalent settings manually.
+3. Build command: `npm ci && npm run build`.
+4. Start command: `npm start`.
+5. Persistent disk mount: `/var/data`.
+6. Set `DATABASE_PATH=/var/data/hkc.sqlite` and `NODE_ENV=production`.
+7. Deploy once. The server creates the database/tables automatically.
+8. Open a Render Shell for the service, set `ACCESS_CODE_SEED` privately to the ten existing validation codes, and run `npm run codes -- seed` once.
+9. Run `npm run codes -- status` and confirm ten unused codes are present before sending any to customers.
+
+Do not place real access codes in `render.yaml`, `.env.example`, frontend source, or any `VITE_*` environment variable.
+
+## Authentication behaviour
+
+- A customer chooses **I already have access → Redeem access code**.
+- The backend validates that the code exists, is unused and is not revoked.
+- The customer sets email + password (8+ characters).
+- User creation and code redemption happen in one SQLite `BEGIN IMMEDIATE` transaction.
+- `access_expires_at` is set by the server to redemption time + 90 days.
+- The customer receives an HTTP-only `SameSite=Lax` session cookie; production cookies are also `Secure`.
+- Future sign-in uses email/password; invalid sign-in always returns `Email or password is incorrect.`
+- Expired accounts are blocked server-side regardless of cookies, localStorage or the device clock.
+- Flashcard progress remains local-only and unchanged.
+
+## Security scope and known MVP limitations
+
+Implemented: salted scrypt password hashing, unique normalised emails, parameterised SQLite statements, atomic one-time redemption, server-side sessions, HTTP-only/SameSite cookies, production Secure cookies, server-authoritative expiry, generic user-facing errors, basic in-memory rate limiting, and protected session checks.
+
+Deliberately not implemented for the five-customer validation: password reset, email verification, OAuth/social login, Stripe webhooks, subscriptions, admin UI, device fingerprinting, concurrent-session controls, analytics, or sophisticated distributed rate limiting. If a customer forgets a password during validation, recovery is a manual operator issue; no reset flow exists yet.
+
+## Pre-payment manual checks
+
+Before accepting the first live payment, manually verify on the deployed Render service:
+
+1. The Stripe button still opens the existing live Payment Link.
+2. An unused code redeems once and creates an account.
+3. The same code is rejected on a second activation attempt.
+4. The new account can sign out and sign back in.
+5. A wrong password receives the generic login error.
+6. `npm run codes -- status CODE` shows the code as redeemed and linked to the expected account.
+7. The database password value starts with `scrypt$` and is not plaintext.
+8. An expired test account is blocked and sees `Your access period has ended.`
+9. Flashcards, practice, the 30-question mock and results still behave as before.
+10. Browser dev tools / built frontend assets contain no real access codes.
+
+## Product disclaimer
 
 Hull Knowledge Cards is an independent revision resource. It is not affiliated with or endorsed by Hull City Council. Questions are provided for revision purposes and are not official council examination questions.
-
-Do not add pass guarantees, invented pass marks, council branding, fake testimonials, artificial scarcity or claims of access to confidential council material.
