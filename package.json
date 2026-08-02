@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node server/index.mjs",
+    "start": "node scripts/seed-on-start.mjs && node server/index.mjs",
     "codes": "node scripts/access-codes.mjs"
   },
   "dependencies": {
