@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: hull-knowledge-cards
+    runtime: node
+    plan: starter
+    branch: commercial-mvp
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /var/data/hkc.sqlite
+    disk:
+      name: hull-knowledge-cards-data
+      mountPath: /var/data
+      sizeGB: 1
