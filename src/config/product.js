@@ -4,5 +4,5 @@ export const PRODUCT = {
   accessDays: 90,
   checkoutUrl: "https://buy.stripe.com/cNi14meL300m21Q0jH2oE01",
   disclaimer:
-    "Hull Knowledge Cards is an independent revision resource. It is not affiliated with or endorsed by Hull City Council. Questions are provided for revision purposes and are not official council examination questions.",
+    "Hull Knowledge Cards is an independent revision resource. It is not affiliated with or endorsed by Hull City Council. Questions are provided for revision purposes and are not official council examination questions. Access is licensed to one individual only; account credentials must not be shared and access is limited to two active devices/sessions at a time.",
 };
