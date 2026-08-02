@@ -3,10 +3,15 @@
   "private": true,
   "version": "1.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/publish-static.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server/index.mjs",
+    "codes": "node scripts/access-codes.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",
