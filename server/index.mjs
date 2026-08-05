@@ -93,6 +93,10 @@ function normaliseRef(value) {
   const cleaned = String(value || "direct").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").slice(0, 64);
   return cleaned || "direct";
 }
+function normaliseCohort(value) {
+  const cleaned = String(value || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").slice(0, 64);
+  return cleaned || null;
+}
 function rating(value) {
   const number = Number(value);
   return Number.isInteger(number) && number >= 1 && number <= 5 ? number : null;
@@ -154,10 +158,26 @@ function createSession(user) {
   return { token, expiresAt: sessionExpiry.toISOString() };
 }
 
+const USER_WITH_COHORT_SQL = `
+  SELECT users.id, users.email, users.password_hash, users.access_expires_at,
+         cohort_access_codes.cohort_key, cohort_access_codes.source AS cohort_source
+  FROM users
+  LEFT JOIN cohort_redemptions ON cohort_redemptions.user_id = users.id
+  LEFT JOIN cohort_access_codes ON cohort_access_codes.id = cohort_redemptions.cohort_access_code_id
+`;
+
 function getSessionUser(req) {
   const token = cookies(req)[SESSION_COOKIE];
   if (!token) return null;
-  const row = db.prepare(`SELECT users.id, users.email, users.access_expires_at, sessions.expires_at AS session_expires_at FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token_hash = ?`).get(tokenHash(token));
+  const row = db.prepare(`
+    SELECT users.id, users.email, users.access_expires_at, sessions.expires_at AS session_expires_at,
+           cohort_access_codes.cohort_key, cohort_access_codes.source AS cohort_source
+    FROM sessions
+    JOIN users ON users.id = sessions.user_id
+    LEFT JOIN cohort_redemptions ON cohort_redemptions.user_id = users.id
+    LEFT JOIN cohort_access_codes ON cohort_access_codes.id = cohort_redemptions.cohort_access_code_id
+    WHERE sessions.token_hash = ?
+  `).get(tokenHash(token));
   if (!row) return null;
   if (new Date(row.session_expires_at).getTime() <= Date.now()) {
     db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash(token));
@@ -166,7 +186,18 @@ function getSessionUser(req) {
   return row;
 }
 
-function activeUserPayload(user) { return { email: user.email, accessExpiresAt: user.access_expires_at }; }
+function activeUserPayload(user) {
+  return {
+    email: user.email,
+    accessExpiresAt: user.access_expires_at,
+    cohortKey: user.cohort_key || null,
+    cohortSource: user.cohort_source || null,
+  };
+}
+
+function activeCohortCode(code) {
+  return db.prepare("SELECT id, code, cohort_key, source, expires_at, revoked_at FROM cohort_access_codes WHERE code = ?").get(code);
+}
 
 async function handleApi(req, res, pathname) {
   if (pathname === "/api/health" && req.method === "GET") return json(res, 200, { ok: true });
@@ -180,8 +211,8 @@ async function handleApi(req, res, pathname) {
     let propertiesJson;
     try { propertiesJson = cleanProperties(body.properties); }
     catch { return json(res, 400, { message: "Analytics properties are too large." }); }
-    db.prepare("INSERT INTO analytics_events (visitor_id, session_id, first_ref, event_name, properties_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(String(body.visitorId), String(body.sessionId), normaliseRef(body.firstRef), eventName, propertiesJson, new Date().toISOString());
+    db.prepare("INSERT INTO analytics_events (visitor_id, session_id, first_ref, cohort_key, event_name, properties_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(String(body.visitorId), String(body.sessionId), normaliseRef(body.firstRef), normaliseCohort(body.cohortKey), eventName, propertiesJson, new Date().toISOString());
     return json(res, 202, { ok: true });
   }
 
@@ -192,8 +223,8 @@ async function handleApi(req, res, pathname) {
     const mostUseful = ["flashcards", "practice", "mock", "other", ""].includes(String(body.mostUseful || "")) ? String(body.mostUseful || "") : "";
     const outcome = ["not-yet", "passed", "not-passed", "prefer-not-to-say", ""].includes(String(body.outcome || "")) ? String(body.outcome || "") : "";
     const missingText = String(body.missingText || "").trim().slice(0, 1000);
-    db.prepare("INSERT INTO candidate_feedback (visitor_id, session_id, first_ref, helpful_rating, ease_rating, most_useful, missing_text, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(String(body.visitorId), String(body.sessionId), normaliseRef(body.firstRef), rating(body.helpfulRating), rating(body.easeRating), mostUseful || null, missingText || null, outcome || null, new Date().toISOString());
+    db.prepare("INSERT INTO candidate_feedback (visitor_id, session_id, first_ref, cohort_key, helpful_rating, ease_rating, most_useful, missing_text, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(String(body.visitorId), String(body.sessionId), normaliseRef(body.firstRef), normaliseCohort(body.cohortKey), rating(body.helpfulRating), rating(body.easeRating), mostUseful || null, missingText || null, outcome || null, new Date().toISOString());
     return json(res, 201, { ok: true });
   }
 
@@ -205,17 +236,31 @@ async function handleApi(req, res, pathname) {
   }
 
   if (pathname === "/api/access-codes/validate" && req.method === "POST") {
-    if (rateLimited(req, "validate", 20)) return json(res, 429, { message: "Too many attempts. Please try again shortly." });
+    if (rateLimited(req, "validate", 30)) return json(res, 429, { message: "Too many attempts. Please try again shortly." });
     const body = await readJson(req);
     const code = normaliseCode(body.code);
+
+    const cohortCode = activeCohortCode(code);
+    if (cohortCode) {
+      if (cohortCode.revoked_at) return json(res, 404, { status: "invalid", message: "That classroom access code is no longer available." });
+      if (new Date(cohortCode.expires_at).getTime() <= Date.now()) return json(res, 410, { status: "expired", message: "That classroom access code has expired." });
+      return json(res, 200, {
+        status: "available",
+        codeType: "cohort",
+        cohortKey: cohortCode.cohort_key,
+        source: cohortCode.source,
+        expiresAt: cohortCode.expires_at,
+      });
+    }
+
     const row = db.prepare("SELECT redeemed, revoked_at FROM access_codes WHERE code = ?").get(code);
     if (!row || row.revoked_at) return json(res, 404, { status: "invalid", message: "That access code was not recognised. Check it and try again." });
     if (row.redeemed) return json(res, 409, { status: "redeemed", message: "This access code has already been activated. If this is your account, sign in instead." });
-    return json(res, 200, { status: "unused" });
+    return json(res, 200, { status: "unused", codeType: "single-use" });
   }
 
   if (pathname === "/api/auth/redeem" && req.method === "POST") {
-    if (rateLimited(req, "redeem", 10)) return json(res, 429, { message: "Too many attempts. Please try again shortly." });
+    if (rateLimited(req, "redeem", 20)) return json(res, 429, { message: "Too many attempts. Please try again shortly." });
     const body = await readJson(req);
     const code = normaliseCode(body.code);
     const email = normaliseEmail(body.email);
@@ -226,6 +271,45 @@ async function handleApi(req, res, pathname) {
 
     const passwordHash = await hashPassword(password);
     const now = new Date();
+    const cohortCode = activeCohortCode(code);
+
+    if (cohortCode) {
+      if (cohortCode.revoked_at) return json(res, 404, { message: "That classroom access code is no longer available." });
+      if (new Date(cohortCode.expires_at).getTime() <= now.getTime()) return json(res, 410, { message: "That classroom access code has expired." });
+
+      try {
+        db.exec("BEGIN IMMEDIATE;");
+        const currentCode = activeCohortCode(code);
+        if (!currentCode || currentCode.revoked_at || new Date(currentCode.expires_at).getTime() <= Date.now()) {
+          db.exec("ROLLBACK;");
+          return json(res, 410, { message: "That classroom access code is no longer available." });
+        }
+        if (db.prepare("SELECT id FROM users WHERE email = ?").get(email)) {
+          db.exec("ROLLBACK;");
+          return json(res, 409, { code: "EMAIL_EXISTS", message: "An account already exists with this email. Please sign in." });
+        }
+        const userResult = db.prepare("INSERT INTO users (email, password_hash, created_at, access_expires_at) VALUES (?, ?, ?, ?)")
+          .run(email, passwordHash, now.toISOString(), currentCode.expires_at);
+        const userId = Number(userResult.lastInsertRowid);
+        db.prepare("INSERT INTO cohort_redemptions (cohort_access_code_id, user_id, redeemed_at) VALUES (?, ?, ?)")
+          .run(currentCode.id, userId, now.toISOString());
+        db.exec("COMMIT;");
+        const user = {
+          id: userId,
+          email,
+          access_expires_at: currentCode.expires_at,
+          cohort_key: currentCode.cohort_key,
+          cohort_source: currentCode.source,
+        };
+        const session = createSession(user);
+        return json(res, 201, { user: activeUserPayload(user), accessType: "cohort" }, { "Set-Cookie": cookieHeader(session.token, session.expiresAt) });
+      } catch (error) {
+        try { db.exec("ROLLBACK;"); } catch { /* transaction already closed */ }
+        console.error("Cohort redemption failed:", error?.message || error);
+        return json(res, 500, { message: "We could not activate your classroom access. Please try again." });
+      }
+    }
+
     const accessExpiresAt = new Date(now.getTime() + ACCESS_MS).toISOString();
     try {
       db.exec("BEGIN IMMEDIATE;");
@@ -240,7 +324,7 @@ async function handleApi(req, res, pathname) {
       db.exec("COMMIT;");
       const user = { id: userId, email, access_expires_at: accessExpiresAt };
       const session = createSession(user);
-      return json(res, 201, { user: activeUserPayload(user) }, { "Set-Cookie": cookieHeader(session.token, session.expiresAt) });
+      return json(res, 201, { user: activeUserPayload(user), accessType: "single-use" }, { "Set-Cookie": cookieHeader(session.token, session.expiresAt) });
     } catch (error) {
       try { db.exec("ROLLBACK;"); } catch { /* transaction already closed */ }
       console.error("Redemption failed:", error?.message || error);
@@ -253,7 +337,7 @@ async function handleApi(req, res, pathname) {
     const body = await readJson(req);
     const email = normaliseEmail(body.email);
     const password = String(body.password || "");
-    const user = db.prepare("SELECT id, email, password_hash, access_expires_at FROM users WHERE email = ?").get(email);
+    const user = db.prepare(`${USER_WITH_COHORT_SQL} WHERE users.email = ?`).get(email);
     const valid = user ? await verifyPassword(password, user.password_hash) : false;
     if (!valid) return json(res, 401, { message: "Email or password is incorrect." });
     if (new Date(user.access_expires_at).getTime() <= Date.now()) return json(res, 403, { code: "ACCESS_EXPIRED", message: "Your access period has ended.", accessExpiresAt: user.access_expires_at });
