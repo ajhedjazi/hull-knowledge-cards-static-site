@@ -3,6 +3,8 @@ const ATTRIBUTION_KEY = "hkc-first-ref-v1";
 const SESSION_KEY = "hkc-analytics-session-v1";
 const CONSENT_KEY = "hkc-analytics-consent-v1";
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const pendingEvents = [];
+let controlsReady = false;
 
 function randomId(prefix) {
   try {
@@ -92,10 +94,8 @@ export function getAnalyticsContext({ ephemeral = false } = {}) {
   return { visitorId, sessionId: sessionRecord.id, firstRef, ephemeral };
 }
 
-export function trackEvent(eventName, properties = {}) {
-  if (typeof window === "undefined" || getAnalyticsConsent() !== true) return;
+function sendEvent(eventName, properties) {
   const context = getAnalyticsContext();
-
   fetch("/api/analytics/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -106,7 +106,136 @@ export function trackEvent(eventName, properties = {}) {
   });
 }
 
+function flushPendingEvents() {
+  const queued = pendingEvents.splice(0, pendingEvents.length);
+  queued.forEach(({ eventName, properties }) => sendEvent(eventName, properties));
+}
+
+function ensureAnalyticsControls() {
+  if (typeof document === "undefined" || controlsReady) return;
+  controlsReady = true;
+
+  const choiceButton = document.createElement("button");
+  choiceButton.type = "button";
+  choiceButton.textContent = "Analytics choices";
+  Object.assign(choiceButton.style, {
+    position: "fixed",
+    right: "10px",
+    bottom: "10px",
+    zIndex: "90",
+    padding: "8px 10px",
+    border: "1px solid #bed0cb",
+    borderRadius: "10px",
+    background: "#fffdf8",
+    color: "#315a56",
+    font: "600 12px system-ui, sans-serif",
+    cursor: "pointer",
+    boxShadow: "0 5px 18px #1432301a",
+  });
+
+  const panel = document.createElement("div");
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-label", "Analytics choices");
+  Object.assign(panel.style, {
+    position: "fixed",
+    left: "12px",
+    right: "12px",
+    bottom: "12px",
+    zIndex: "100",
+    maxWidth: "680px",
+    margin: "0 auto",
+    padding: "14px",
+    border: "1px solid #cbdad5",
+    borderRadius: "14px",
+    background: "#fffdf8",
+    color: "#173f3c",
+    boxShadow: "0 16px 40px #1432302c",
+    font: "14px/1.45 system-ui, sans-serif",
+  });
+
+  const copy = document.createElement("p");
+  copy.style.margin = "0 0 12px";
+  copy.textContent = "Optional analytics help improve this free revision tool. If allowed, a pseudonymous visitor ID, first referral source and learning events are stored so repeat use can be measured. No name or email is collected for analytics.";
+
+  const actions = document.createElement("div");
+  Object.assign(actions.style, { display: "flex", gap: "8px", flexWrap: "wrap" });
+
+  const allowButton = document.createElement("button");
+  allowButton.type = "button";
+  allowButton.textContent = "Allow analytics";
+  Object.assign(allowButton.style, {
+    padding: "9px 12px",
+    border: "1px solid #073b3a",
+    borderRadius: "10px",
+    background: "#073b3a",
+    color: "white",
+    font: "700 13px system-ui, sans-serif",
+    cursor: "pointer",
+  });
+
+  const declineButton = document.createElement("button");
+  declineButton.type = "button";
+  declineButton.textContent = "Do not allow";
+  Object.assign(declineButton.style, {
+    padding: "9px 12px",
+    border: "1px solid #bed0cb",
+    borderRadius: "10px",
+    background: "white",
+    color: "#173f3c",
+    font: "700 13px system-ui, sans-serif",
+    cursor: "pointer",
+  });
+
+  function closePanel() {
+    panel.style.display = "none";
+    choiceButton.style.display = "block";
+  }
+
+  allowButton.addEventListener("click", () => {
+    setAnalyticsConsent(true);
+    closePanel();
+    flushPendingEvents();
+  });
+
+  declineButton.addEventListener("click", () => {
+    setAnalyticsConsent(false);
+    pendingEvents.splice(0, pendingEvents.length);
+    closePanel();
+  });
+
+  choiceButton.addEventListener("click", () => {
+    panel.style.display = "block";
+    choiceButton.style.display = "none";
+  });
+
+  actions.append(allowButton, declineButton);
+  panel.append(copy, actions);
+  document.body.append(choiceButton, panel);
+
+  if (getAnalyticsConsent() === null) {
+    choiceButton.style.display = "none";
+    panel.style.display = "block";
+  } else {
+    choiceButton.style.display = "block";
+    panel.style.display = "none";
+  }
+}
+
+export function trackEvent(eventName, properties = {}) {
+  if (typeof window === "undefined") return;
+  ensureAnalyticsControls();
+  const consent = getAnalyticsConsent();
+  if (consent === true) {
+    sendEvent(eventName, properties);
+    return;
+  }
+  if (consent === null) {
+    pendingEvents.push({ eventName, properties });
+  }
+}
+
 export async function submitFeedback(feedback) {
+  ensureAnalyticsControls();
   const context = getAnalyticsContext({ ephemeral: getAnalyticsConsent() !== true });
   const response = await fetch("/api/feedback", {
     method: "POST",
