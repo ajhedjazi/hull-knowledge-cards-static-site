@@ -1,6 +1,8 @@
 const VISITOR_KEY = "hkc-analytics-visitor-v1";
 const ATTRIBUTION_KEY = "hkc-first-ref-v1";
 const SESSION_KEY = "hkc-analytics-session-v1";
+const CONSENT_KEY = "hkc-analytics-consent-v1";
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 
 function randomId(prefix) {
   try {
@@ -11,19 +13,15 @@ function randomId(prefix) {
 }
 
 function safeGet(storage, key) {
-  try {
-    return storage.getItem(key);
-  } catch {
-    return null;
-  }
+  try { return storage.getItem(key); } catch { return null; }
 }
 
 function safeSet(storage, key, value) {
-  try {
-    storage.setItem(key, value);
-  } catch {
-    // Analytics must never block revision if browser storage is unavailable.
-  }
+  try { storage.setItem(key, value); } catch { /* Never block revision. */ }
+}
+
+function safeRemove(storage, key) {
+  try { storage.removeItem(key); } catch { /* Never block revision. */ }
 }
 
 function normaliseRef(value) {
@@ -36,9 +34,37 @@ function normaliseRef(value) {
   return cleaned || "direct";
 }
 
-export function getAnalyticsContext() {
+export function getAnalyticsConsent() {
+  if (typeof window === "undefined") return null;
+  const stored = safeGet(window.localStorage, CONSENT_KEY);
+  if (stored === "yes") return true;
+  if (stored === "no") return false;
+  return null;
+}
+
+export function setAnalyticsConsent(allowed) {
+  if (typeof window === "undefined") return;
+  safeSet(window.localStorage, CONSENT_KEY, allowed ? "yes" : "no");
+  if (!allowed) {
+    safeRemove(window.localStorage, VISITOR_KEY);
+    safeRemove(window.localStorage, ATTRIBUTION_KEY);
+    safeRemove(window.sessionStorage, SESSION_KEY);
+  }
+}
+
+export function getAnalyticsContext({ ephemeral = false } = {}) {
   if (typeof window === "undefined") {
-    return { visitorId: "server", sessionId: "server", firstRef: "direct" };
+    return { visitorId: "v_server000", sessionId: "s_server000", firstRef: "direct" };
+  }
+
+  const queryRef = normaliseRef(new URLSearchParams(window.location.search).get("ref"));
+  if (getAnalyticsConsent() !== true) {
+    return {
+      visitorId: randomId("v"),
+      sessionId: randomId("s"),
+      firstRef: queryRef,
+      ephemeral: true,
+    };
   }
 
   let visitorId = safeGet(window.localStorage, VISITOR_KEY);
@@ -49,49 +75,46 @@ export function getAnalyticsContext() {
 
   let firstRef = safeGet(window.localStorage, ATTRIBUTION_KEY);
   if (!firstRef) {
-    const queryRef = new URLSearchParams(window.location.search).get("ref");
-    firstRef = normaliseRef(queryRef);
+    firstRef = queryRef;
     safeSet(window.localStorage, ATTRIBUTION_KEY, firstRef);
   }
 
-  let sessionId = safeGet(window.sessionStorage, SESSION_KEY);
-  if (!sessionId) {
-    sessionId = randomId("s");
-    safeSet(window.sessionStorage, SESSION_KEY, sessionId);
+  const now = Date.now();
+  let sessionRecord = null;
+  try { sessionRecord = JSON.parse(safeGet(window.sessionStorage, SESSION_KEY) || "null"); } catch { sessionRecord = null; }
+  if (!sessionRecord?.id || !sessionRecord?.lastSeen || now - sessionRecord.lastSeen > SESSION_TIMEOUT_MS) {
+    sessionRecord = { id: randomId("s"), lastSeen: now };
+  } else {
+    sessionRecord.lastSeen = now;
   }
+  safeSet(window.sessionStorage, SESSION_KEY, JSON.stringify(sessionRecord));
 
-  return { visitorId, sessionId, firstRef };
+  return { visitorId, sessionId: sessionRecord.id, firstRef, ephemeral };
 }
 
 export function trackEvent(eventName, properties = {}) {
-  if (typeof window === "undefined") return;
+  if (typeof window === "undefined" || getAnalyticsConsent() !== true) return;
   const context = getAnalyticsContext();
 
   fetch("/api/analytics/events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     keepalive: true,
-    body: JSON.stringify({
-      eventName,
-      ...context,
-      properties,
-    }),
+    body: JSON.stringify({ eventName, ...context, properties }),
   }).catch(() => {
     // Analytics failures must never interrupt revision.
   });
 }
 
 export async function submitFeedback(feedback) {
-  const context = getAnalyticsContext();
+  const context = getAnalyticsContext({ ephemeral: getAnalyticsConsent() !== true });
   const response = await fetch("/api/feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ...context, ...feedback }),
   });
 
-  if (!response.ok) {
-    throw new Error("FEEDBACK_FAILED");
-  }
+  if (!response.ok) throw new Error("FEEDBACK_FAILED");
 
   trackEvent("feedback_submitted", {
     helpfulRating: feedback.helpfulRating || null,
