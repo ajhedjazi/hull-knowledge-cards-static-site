@@ -34,7 +34,11 @@ function formatAccessDate(value) {
 
 function cohortInviteKey() {
   if (typeof window === "undefined") return "";
-  return String(new URLSearchParams(window.location.search).get("cohort") || "").trim().toLowerCase();
+  const params = new URLSearchParams(window.location.search);
+  const cohort = String(params.get("cohort") || "").trim().toLowerCase();
+  if (cohort) return cohort;
+  const referral = String(params.get("ref") || "").trim().toLowerCase();
+  return referral === "ruth-hull" ? "classroom" : "";
 }
 
 export default function App() {
