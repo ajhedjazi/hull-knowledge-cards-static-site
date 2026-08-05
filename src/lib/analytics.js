@@ -1,10 +1,12 @@
 const VISITOR_KEY = "hkc-analytics-visitor-v1";
 const ATTRIBUTION_KEY = "hkc-first-ref-v1";
+const COHORT_KEY = "hkc-analytics-cohort-v1";
 const SESSION_KEY = "hkc-analytics-session-v1";
 const CONSENT_KEY = "hkc-analytics-consent-v1";
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const pendingEvents = [];
 let controlsReady = false;
+let pendingCohortKey = null;
 
 function randomId(prefix) {
   try {
@@ -36,6 +38,16 @@ function normaliseRef(value) {
   return cleaned || "direct";
 }
 
+function normaliseCohort(value) {
+  const cleaned = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 64);
+  return cleaned || null;
+}
+
 export function getAnalyticsConsent() {
   if (typeof window === "undefined") return null;
   const stored = safeGet(window.localStorage, CONSENT_KEY);
@@ -44,27 +56,40 @@ export function getAnalyticsConsent() {
   return null;
 }
 
+export function setCohortAttribution(cohortKey) {
+  pendingCohortKey = normaliseCohort(cohortKey);
+  if (typeof window !== "undefined" && getAnalyticsConsent() === true && pendingCohortKey) {
+    safeSet(window.localStorage, COHORT_KEY, pendingCohortKey);
+  }
+}
+
 export function setAnalyticsConsent(allowed) {
   if (typeof window === "undefined") return;
   safeSet(window.localStorage, CONSENT_KEY, allowed ? "yes" : "no");
+  if (allowed && pendingCohortKey) {
+    safeSet(window.localStorage, COHORT_KEY, pendingCohortKey);
+  }
   if (!allowed) {
     safeRemove(window.localStorage, VISITOR_KEY);
     safeRemove(window.localStorage, ATTRIBUTION_KEY);
+    safeRemove(window.localStorage, COHORT_KEY);
     safeRemove(window.sessionStorage, SESSION_KEY);
   }
 }
 
 export function getAnalyticsContext({ ephemeral = false } = {}) {
   if (typeof window === "undefined") {
-    return { visitorId: "v_server000", sessionId: "s_server000", firstRef: "direct" };
+    return { visitorId: "v_server000", sessionId: "s_server000", firstRef: "direct", cohortKey: null };
   }
 
   const queryRef = normaliseRef(new URLSearchParams(window.location.search).get("ref"));
+  const currentCohort = pendingCohortKey || normaliseCohort(safeGet(window.localStorage, COHORT_KEY));
   if (getAnalyticsConsent() !== true) {
     return {
       visitorId: randomId("v"),
       sessionId: randomId("s"),
       firstRef: queryRef,
+      cohortKey: currentCohort,
       ephemeral: true,
     };
   }
@@ -81,6 +106,8 @@ export function getAnalyticsContext({ ephemeral = false } = {}) {
     safeSet(window.localStorage, ATTRIBUTION_KEY, firstRef);
   }
 
+  if (currentCohort) safeSet(window.localStorage, COHORT_KEY, currentCohort);
+
   const now = Date.now();
   let sessionRecord = null;
   try { sessionRecord = JSON.parse(safeGet(window.sessionStorage, SESSION_KEY) || "null"); } catch { sessionRecord = null; }
@@ -91,7 +118,7 @@ export function getAnalyticsContext({ ephemeral = false } = {}) {
   }
   safeSet(window.sessionStorage, SESSION_KEY, JSON.stringify(sessionRecord));
 
-  return { visitorId, sessionId: sessionRecord.id, firstRef, ephemeral };
+  return { visitorId, sessionId: sessionRecord.id, firstRef, cohortKey: currentCohort, ephemeral };
 }
 
 function sendEvent(eventName, properties) {
@@ -155,7 +182,7 @@ function ensureAnalyticsControls() {
 
   const copy = document.createElement("p");
   copy.style.margin = "0 0 12px";
-  copy.textContent = "Optional analytics help improve this free revision tool. If allowed, a pseudonymous visitor ID, first referral source and learning events are stored so repeat use can be measured. No name or email is collected for analytics.";
+  copy.textContent = "Optional analytics help improve this revision tool. If allowed, a pseudonymous visitor ID, first referral source, cohort identifier where relevant, and learning events are stored so repeat use can be measured. No name or email is collected for analytics.";
 
   const actions = document.createElement("div");
   Object.assign(actions.style, { display: "flex", gap: "8px", flexWrap: "wrap" });
