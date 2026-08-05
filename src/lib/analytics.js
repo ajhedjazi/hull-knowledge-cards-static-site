@@ -147,7 +147,7 @@ function ensureAnalyticsControls() {
   choiceButton.textContent = "Analytics choices";
   Object.assign(choiceButton.style, {
     position: "fixed",
-    right: "10px",
+    left: "10px",
     bottom: "10px",
     zIndex: "90",
     padding: "8px 10px",
