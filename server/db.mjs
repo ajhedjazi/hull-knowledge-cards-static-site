@@ -42,8 +42,37 @@ export function openDatabase(databasePath = process.env.DATABASE_PATH || DEFAULT
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS analytics_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visitor_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      first_ref TEXT NOT NULL,
+      event_name TEXT NOT NULL,
+      properties_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS candidate_feedback (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      visitor_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      first_ref TEXT NOT NULL,
+      helpful_rating INTEGER,
+      ease_rating INTEGER,
+      most_useful TEXT,
+      missing_text TEXT,
+      outcome TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_analytics_visitor ON analytics_events(visitor_id);
+    CREATE INDEX IF NOT EXISTS idx_analytics_session ON analytics_events(session_id);
+    CREATE INDEX IF NOT EXISTS idx_analytics_ref ON analytics_events(first_ref);
+    CREATE INDEX IF NOT EXISTS idx_analytics_event ON analytics_events(event_name);
+    CREATE INDEX IF NOT EXISTS idx_analytics_created_at ON analytics_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_feedback_ref ON candidate_feedback(first_ref);
   `);
 
   return db;
