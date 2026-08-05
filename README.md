@@ -1,125 +1,59 @@
 # Hull Knowledge Cards — commercial MVP
 
-This branch is the five-customer validation build. It keeps the existing Stripe Payment Link and revision product, but replaces reusable client-side access codes with server-backed accounts and single-use code redemption.
+This branch keeps the normal £19.99 / 90-day public commercial journey and also supports reusable, time-limited cohort access codes for classroom candidates.
 
 ## Architecture
 
-- Vite/React frontend (existing product UI and revision logic)
-- Minimal Node HTTP server using only Node built-ins
+- Vite/React frontend
+- Minimal Node HTTP server using Node built-ins
 - SQLite via `node:sqlite`
-- Passwords hashed with Node `crypto.scrypt` and unique random salts
-- Random authenticated sessions stored server-side; browser receives only an HTTP-only session cookie
+- Existing paid single-use access codes and account login
+- Reusable cohort codes with fixed cohort expiry dates
+- First-party consent-based analytics and lightweight candidate feedback
 - One Render Web Service serves both `/api/*` and the built frontend
 - SQLite database stored on a Render persistent disk
 
-The server imports `PRODUCT.accessDays` from `src/config/product.js`, so the 90-day duration has one central product configuration value. Stripe remains the existing Payment Link; there is no Stripe API/webhook integration in this MVP.
-
 ## Required environment
 
-Copy `.env.example` for local reference. The server reads environment variables directly; no dotenv package is required.
-
 - `DATABASE_PATH` — SQLite path. Local default is `./data/hkc.sqlite`; on Render use `/var/data/hkc.sqlite`.
-- `ACCESS_CODE_SEED` — comma-separated codes used only when running the seed command. Do **not** put this in a `VITE_*` variable or commit real codes.
+- `ACCESS_CODE_SEED` — comma-separated paid single-use access codes.
+- `COHORT_ACCESS_SEED` — reusable cohort access records.
 - `PORT` — supplied automatically by Render; local default is `3000`.
 - `NODE_ENV=production` — enables the Secure flag on session cookies.
 
-Node 22.5+ is required because this MVP uses the built-in `node:sqlite` module.
+Node 22.5+ is required because the MVP uses the built-in `node:sqlite` module.
 
-## Local setup
+## Cohort access
 
-```bash
-npm ci
-npm run build
-ACCESS_CODE_SEED="CODE-ONE,CODE-TWO" npm run codes -- seed
-npm start
+Cohort records use this configuration format:
+
+```text
+CODE|cohort-key|source|ISO-expiry
 ```
 
-Open `http://localhost:3000`. The database schema is initialised automatically on server start or whenever the access-code CLI opens the database.
+Multiple monthly cohorts can be configured without application-code changes by separating records with semicolons, for example:
 
-## Access-code operations
-
-Real access codes are intentionally **not** stored in frontend JavaScript or committed source. For the current launch, configure `ACCESS_CODE_SEED` privately with the existing ten validation codes and run the seed command once against the production database.
-
-Seed codes (safe to re-run; existing rows are unchanged):
-
-```bash
-ACCESS_CODE_SEED="code1,code2,..." npm run codes -- seed
+```text
+RUTH-AUG26|aug-2026|ruth-hull|2026-09-30T23:59:59.000Z;RUTH-SEP26|sep-2026|ruth-hull|2026-10-31T23:59:59.000Z
 ```
 
-Add a new code:
+Each cohort code is reusable by multiple candidates. Each candidate creates an individual account, but all accounts created from that cohort code inherit the same fixed cohort expiry date. The referral URL does not grant access by itself; possession of a valid cohort code does.
 
-```bash
-npm run codes -- add HKC-EXAMPLE-1234
-```
+The startup seed is safe to rerun. Existing non-revoked cohort records are updated to the configured cohort/source/expiry values.
 
-Inspect all codes and redemption state:
+## Public access
 
-```bash
-npm run codes -- status
-```
-
-Inspect one code:
-
-```bash
-npm run codes -- status HKC-EXAMPLE-1234
-```
-
-Revoke an **unused** code:
-
-```bash
-npm run codes -- revoke HKC-EXAMPLE-1234
-```
-
-The revoke command refuses to revoke an already redeemed code. These commands should be run from a Render Shell so they operate on the persistent production database at `DATABASE_PATH`.
+Public, direct and search visitors see the normal £19.99 / 90-day commercial journey. Existing paid access-code behaviour remains single-use and unchanged.
 
 ## Render deployment
 
-This branch includes `render.yaml` for one Node Web Service with a 1 GB persistent disk.
-
-1. Deploy **only** the `commercial-mvp` branch. Do not merge it into `main` for this validation.
-2. Create/use the service from `render.yaml`, or configure equivalent settings manually.
-3. Build command: `npm ci && npm run build`.
-4. Start command: `npm start`.
-5. Persistent disk mount: `/var/data`.
-6. Set `DATABASE_PATH=/var/data/hkc.sqlite` and `NODE_ENV=production`.
-7. Deploy once. The server creates the database/tables automatically.
-8. Open a Render Shell for the service, set `ACCESS_CODE_SEED` privately to the ten existing validation codes, and run `npm run codes -- seed` once.
-9. Run `npm run codes -- status` and confirm ten unused codes are present before sending any to customers.
-
-Do not place real access codes in `render.yaml`, `.env.example`, frontend source, or any `VITE_*` environment variable.
-
-## Authentication behaviour
-
-- A customer chooses **I already have access → Redeem access code**.
-- The backend validates that the code exists, is unused and is not revoked.
-- The customer sets email + password (8+ characters).
-- User creation and code redemption happen in one SQLite `BEGIN IMMEDIATE` transaction.
-- `access_expires_at` is set by the server to redemption time + 90 days.
-- The customer receives an HTTP-only `SameSite=Lax` session cookie; production cookies are also `Secure`.
-- Future sign-in uses email/password; invalid sign-in always returns `Email or password is incorrect.`
-- Expired accounts are blocked server-side regardless of cookies, localStorage or the device clock.
-- Flashcard progress remains local-only and unchanged.
-
-## Security scope and known MVP limitations
-
-Implemented: salted scrypt password hashing, unique normalised emails, parameterised SQLite statements, atomic one-time redemption, server-side sessions, HTTP-only/SameSite cookies, production Secure cookies, server-authoritative expiry, generic user-facing errors, basic in-memory rate limiting, and protected session checks.
-
-Deliberately not implemented for the five-customer validation: password reset, email verification, OAuth/social login, Stripe webhooks, subscriptions, admin UI, device fingerprinting, concurrent-session controls, analytics, or sophisticated distributed rate limiting. If a customer forgets a password during validation, recovery is a manual operator issue; no reset flow exists yet.
-
-## Pre-payment manual checks
-
-Before accepting the first live payment, manually verify on the deployed Render service:
-
-1. The Stripe button still opens the existing live Payment Link.
-2. An unused code redeems once and creates an account.
-3. The same code is rejected on a second activation attempt.
-4. The new account can sign out and sign back in.
-5. A wrong password receives the generic login error.
-6. `npm run codes -- status CODE` shows the code as redeemed and linked to the expected account.
-7. The database password value starts with `scrypt$` and is not plaintext.
-8. An expired test account is blocked and sees `Your access period has ended.`
-9. Flashcards, practice, the 30-question mock and results still behave as before.
-10. Browser dev tools / built frontend assets contain no real access codes.
+1. Deploy only the `commercial-mvp` branch.
+2. Build command: `npm ci && npm run build`.
+3. Start command: `npm start`.
+4. Persistent disk mount: `/var/data`.
+5. Set `DATABASE_PATH=/var/data/hkc.sqlite` and `NODE_ENV=production`.
+6. Set `COHORT_ACCESS_SEED` privately in Render. Do not place real access codes in frontend source or any `VITE_*` variable.
+7. Deploy/restart. `npm start` runs the startup seed before starting the server.
 
 ## Product disclaimer
 
