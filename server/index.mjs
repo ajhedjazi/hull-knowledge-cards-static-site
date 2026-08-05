@@ -21,6 +21,18 @@ const staticRoot = resolve(projectRoot, "dist");
 const db = openDatabase();
 const attempts = new Map();
 
+const ANALYTICS_EVENTS = new Set([
+  "visit",
+  "feature_opened",
+  "flashcard_marked",
+  "practice_started",
+  "practice_answered",
+  "practice_completed",
+  "mock_started",
+  "mock_completed",
+  "feedback_submitted",
+]);
+
 const MIME_TYPES = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -30,6 +42,8 @@ const MIME_TYPES = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".webp": "image/webp",
+  ".xml": "application/xml; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 function json(res, status, payload, extraHeaders = {}) {
@@ -74,6 +88,21 @@ async function readJson(req) {
 }
 
 function isValidEmail(email) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254; }
+function validAnalyticsId(value, prefix) { return new RegExp(`^${prefix}_[A-Za-z0-9_-]{6,100}$`).test(String(value || "")); }
+function normaliseRef(value) {
+  const cleaned = String(value || "direct").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-").replace(/-+/g, "-").slice(0, 64);
+  return cleaned || "direct";
+}
+function rating(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 1 && number <= 5 ? number : null;
+}
+function cleanProperties(value) {
+  const properties = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const encoded = JSON.stringify(properties);
+  if (encoded.length > 4096) throw new Error("ANALYTICS_PROPERTIES_TOO_LARGE");
+  return encoded;
+}
 
 async function hashPassword(password) {
   const salt = randomBytes(16);
@@ -141,6 +170,32 @@ function activeUserPayload(user) { return { email: user.email, accessExpiresAt: 
 
 async function handleApi(req, res, pathname) {
   if (pathname === "/api/health" && req.method === "GET") return json(res, 200, { ok: true });
+
+  if (pathname === "/api/analytics/events" && req.method === "POST") {
+    if (rateLimited(req, "analytics", 2000)) return json(res, 429, { message: "Too many analytics events." });
+    const body = await readJson(req);
+    const eventName = String(body.eventName || "");
+    if (!ANALYTICS_EVENTS.has(eventName)) return json(res, 400, { message: "Invalid analytics event." });
+    if (!validAnalyticsId(body.visitorId, "v") || !validAnalyticsId(body.sessionId, "s")) return json(res, 400, { message: "Invalid analytics identifiers." });
+    let propertiesJson;
+    try { propertiesJson = cleanProperties(body.properties); }
+    catch { return json(res, 400, { message: "Analytics properties are too large." }); }
+    db.prepare("INSERT INTO analytics_events (visitor_id, session_id, first_ref, event_name, properties_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(String(body.visitorId), String(body.sessionId), normaliseRef(body.firstRef), eventName, propertiesJson, new Date().toISOString());
+    return json(res, 202, { ok: true });
+  }
+
+  if (pathname === "/api/feedback" && req.method === "POST") {
+    if (rateLimited(req, "feedback", 100)) return json(res, 429, { message: "Too many feedback submissions." });
+    const body = await readJson(req);
+    if (!validAnalyticsId(body.visitorId, "v") || !validAnalyticsId(body.sessionId, "s")) return json(res, 400, { message: "Invalid feedback identifiers." });
+    const mostUseful = ["flashcards", "practice", "mock", "other", ""].includes(String(body.mostUseful || "")) ? String(body.mostUseful || "") : "";
+    const outcome = ["not-yet", "passed", "not-passed", "prefer-not-to-say", ""].includes(String(body.outcome || "")) ? String(body.outcome || "") : "";
+    const missingText = String(body.missingText || "").trim().slice(0, 1000);
+    db.prepare("INSERT INTO candidate_feedback (visitor_id, session_id, first_ref, helpful_rating, ease_rating, most_useful, missing_text, outcome, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(String(body.visitorId), String(body.sessionId), normaliseRef(body.firstRef), rating(body.helpfulRating), rating(body.easeRating), mostUseful || null, missingText || null, outcome || null, new Date().toISOString());
+    return json(res, 201, { ok: true });
+  }
 
   if (pathname === "/api/auth/session" && req.method === "GET") {
     const user = getSessionUser(req);
