@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
 import RevisionApp from "./RevisionApp";
 import { PRODUCT } from "./config/product";
+import { setCohortAttribution } from "./lib/analytics";
 import "./App.css";
-
-const FREE_VALIDATION_MODE = true;
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
@@ -33,23 +32,31 @@ function formatAccessDate(value) {
   }).format(new Date(value));
 }
 
+function cohortInviteKey() {
+  if (typeof window === "undefined") return "";
+  return String(new URLSearchParams(window.location.search).get("cohort") || "").trim().toLowerCase();
+}
+
 export default function App() {
   const [screen, setScreen] = useState("loading");
   const [user, setUser] = useState(null);
   const [checkoutMessage, setCheckoutMessage] = useState("");
+  const invitedCohort = cohortInviteKey();
+
+  function signedIn(nextUser) {
+    if (nextUser?.cohortKey) setCohortAttribution(nextUser.cohortKey);
+    setUser(nextUser);
+    setScreen("app");
+  }
 
   useEffect(() => {
-    if (FREE_VALIDATION_MODE) {
-      setScreen("app");
-      return undefined;
-    }
-
     let cancelled = false;
 
     apiRequest("/api/auth/session", { method: "GET", headers: {} })
       .then(({ response, body }) => {
         if (cancelled) return;
         if (response.ok && body?.user) {
+          if (body.user.cohortKey) setCohortAttribution(body.user.cohortKey);
           setUser(body.user);
           setScreen("app");
           return;
@@ -60,16 +67,16 @@ export default function App() {
           return;
         }
         setUser(null);
-        setScreen("landing");
+        setScreen(invitedCohort ? "redeem" : "landing");
       })
       .catch(() => {
-        if (!cancelled) setScreen("landing");
+        if (!cancelled) setScreen(invitedCohort ? "redeem" : "landing");
       });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [invitedCohort]);
 
   function openCheckout() {
     if (PRODUCT.checkoutUrl) {
@@ -89,12 +96,8 @@ export default function App() {
       await apiRequest("/api/auth/logout", { method: "POST", body: "{}" });
     } finally {
       setUser(null);
-      setScreen("landing");
+      setScreen(invitedCohort ? "redeem" : "landing");
     }
-  }
-
-  if (FREE_VALIDATION_MODE) {
-    return <RevisionApp />;
   }
 
   if (screen === "loading") {
@@ -132,7 +135,7 @@ export default function App() {
           }}
         >
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {user.email} · until {formatAccessDate(user.accessExpiresAt)}
+            {user.cohortKey ? "Classroom access" : user.email} · until {formatAccessDate(user.accessExpiresAt)}
           </span>
           <button className="text-button" onClick={logout} type="button">Sign out</button>
         </div>
@@ -157,11 +160,9 @@ export default function App() {
   if (screen === "redeem") {
     return (
       <RedeemScreen
-        onBack={() => setScreen("access-choice")}
-        onSignedIn={(nextUser) => {
-          setUser(nextUser);
-          setScreen("app");
-        }}
+        invitedCohort={invitedCohort}
+        onBack={() => setScreen(invitedCohort ? "landing" : "access-choice")}
+        onSignedIn={signedIn}
         onSignIn={() => setScreen("login")}
       />
     );
@@ -170,11 +171,8 @@ export default function App() {
   if (screen === "login") {
     return (
       <LoginScreen
-        onBack={() => setScreen("access-choice")}
-        onSignedIn={(nextUser) => {
-          setUser(nextUser);
-          setScreen("app");
-        }}
+        onBack={() => setScreen(invitedCohort ? "redeem" : "access-choice")}
+        onSignedIn={signedIn}
         onExpired={(accessExpiresAt) => {
           setUser({ accessExpiresAt });
           setScreen("expired");
@@ -248,11 +246,11 @@ function AccessChoiceScreen({ onBack, onRedeem, onSignIn }) {
     <div className="commercial-shell centred-shell">
       <main className="access-card">
         <button className="text-button back-link" onClick={onBack} type="button">← Back</button>
-        <p className="eyebrow">Existing customer</p>
+        <p className="eyebrow">Existing access</p>
         <h1>Access your revision</h1>
-        <p className="access-copy">Activate a new purchase once, or sign in to an account you have already created.</p>
+        <p className="access-copy">Enter an access code you have been given, or sign in to an account you have already activated.</p>
         <div className="access-form">
-          <button className="primary commercial-cta" onClick={onRedeem} type="button">Redeem access code</button>
+          <button className="primary commercial-cta" onClick={onRedeem} type="button">Enter access code</button>
           <button className="secondary-cta" onClick={onSignIn} type="button">Sign in</button>
         </div>
         <p className="commercial-disclaimer compact-disclaimer">{PRODUCT.disclaimer}</p>
@@ -261,9 +259,10 @@ function AccessChoiceScreen({ onBack, onRedeem, onSignIn }) {
   );
 }
 
-function RedeemScreen({ onBack, onSignedIn, onSignIn }) {
+function RedeemScreen({ invitedCohort, onBack, onSignedIn, onSignIn }) {
   const [step, setStep] = useState("code");
   const [code, setCode] = useState("");
+  const [codeMeta, setCodeMeta] = useState(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -280,6 +279,8 @@ function RedeemScreen({ onBack, onSignedIn, onSignIn }) {
         body: JSON.stringify({ code }),
       });
       if (response.ok) {
+        setCodeMeta(body);
+        if (body.cohortKey) setCohortAttribution(body.cohortKey);
         setStep("account");
         return;
       }
@@ -321,16 +322,22 @@ function RedeemScreen({ onBack, onSignedIn, onSignIn }) {
     }
   }
 
+  const isCohortCode = codeMeta?.codeType === "cohort";
+
   return (
     <div className="commercial-shell centred-shell">
       <main className="access-card">
         <button className="text-button back-link" onClick={onBack} type="button">← Back</button>
-        <p className="eyebrow">Activate access</p>
-        <h1>{step === "code" ? "Enter your access code" : "Create your account"}</h1>
+        <p className="eyebrow">{invitedCohort ? "Classroom access" : "Activate access"}</p>
+        <h1>{step === "code" ? (invitedCohort ? "Enter your cohort access code" : "Enter your access code") : "Create your account"}</h1>
         <p className="access-copy">
           {step === "code"
-            ? "Enter the code you were given after purchase. Each code can be activated once."
-            : `Your ${PRODUCT.accessDays}-day access period starts when this account is created.`}
+            ? (invitedCohort
+              ? "Enter the access code provided by your training provider. The code grants free access only while that cohort code remains valid."
+              : "Enter the access code you were given after purchase or by your training provider.")
+            : (isCohortCode
+              ? `Your personal classroom account will have access until ${formatAccessDate(codeMeta.expiresAt)}.`
+              : `Your ${PRODUCT.accessDays}-day access period starts when this account is created.`)}
         </p>
 
         {step === "code" ? (
@@ -343,7 +350,7 @@ function RedeemScreen({ onBack, onSignedIn, onSignIn }) {
               autoComplete="one-time-code"
               autoCapitalize="characters"
               spellCheck="false"
-              placeholder="Enter code"
+              placeholder={invitedCohort ? "Enter cohort code" : "Enter code"}
               required
               autoFocus
             />
@@ -355,6 +362,11 @@ function RedeemScreen({ onBack, onSignedIn, onSignIn }) {
           </form>
         ) : (
           <form className="access-form" onSubmit={createAccount}>
+            {isCohortCode && (
+              <p className="checkout-message" role="status">
+                Classroom access · {codeMeta.cohortKey} · valid until {formatAccessDate(codeMeta.expiresAt)}
+              </p>
+            )}
             <label htmlFor="redeem-email">Email</label>
             <input id="redeem-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setError(""); }} autoComplete="email" required autoFocus />
             <label htmlFor="redeem-password">Password</label>
@@ -432,7 +444,7 @@ function ExpiredScreen({ onCheckout, checkoutMessage }) {
       <main className="access-card expired-card">
         <p className="eyebrow">Hull Knowledge Cards</p>
         <h1>Your access period has ended.</h1>
-        <p className="access-copy">Your {PRODUCT.accessDays}-day access window has finished.</p>
+        <p className="access-copy">Your access window has finished.</p>
         <button className="primary commercial-cta" onClick={onCheckout} type="button">Get Access</button>
         {checkoutMessage && <p className="checkout-message" role="status">{checkoutMessage}</p>}
         <p className="commercial-disclaimer compact-disclaimer">{PRODUCT.disclaimer}</p>
