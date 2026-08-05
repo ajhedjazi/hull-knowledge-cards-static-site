@@ -3,6 +3,8 @@ import RevisionApp from "./RevisionApp";
 import { PRODUCT } from "./config/product";
 import "./App.css";
 
+const FREE_VALIDATION_MODE = true;
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
     ...options,
@@ -37,6 +39,11 @@ export default function App() {
   const [checkoutMessage, setCheckoutMessage] = useState("");
 
   useEffect(() => {
+    if (FREE_VALIDATION_MODE) {
+      setScreen("app");
+      return undefined;
+    }
+
     let cancelled = false;
 
     apiRequest("/api/auth/session", { method: "GET", headers: {} })
@@ -84,6 +91,10 @@ export default function App() {
       setUser(null);
       setScreen("landing");
     }
+  }
+
+  if (FREE_VALIDATION_MODE) {
+    return <RevisionApp />;
   }
 
   if (screen === "loading") {
