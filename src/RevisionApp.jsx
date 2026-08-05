@@ -64,7 +64,7 @@ export default function RevisionApp({ onHome, accessExpiresAt }) {
   }, [category, search]);
 
   useEffect(() => {
-    trackEvent("visit", { landingMode: "free-validation" });
+    trackEvent("visit", { landingMode: "authenticated-revision" });
     trackEvent("feature_opened", { feature: "flashcards" });
   }, []);
 
@@ -263,7 +263,7 @@ export default function RevisionApp({ onHome, accessExpiresAt }) {
 
       <header className="hero">
         <div>
-          <p className="eyebrow">Free independent Hull taxi knowledge-test revision</p>
+          <p className="eyebrow">Independent Hull taxi knowledge-test revision</p>
           <h1>Hull Knowledge Cards</h1>
           <p className="subtitle">
             Practise Hull taxi and private-hire knowledge with interactive flashcards,
@@ -352,8 +352,7 @@ export default function RevisionApp({ onHome, accessExpiresAt }) {
         <p>
           Independent revision resource. Not endorsed by Hull City Council.
           Venue information should be checked against current official guidance.
-          Flashcard progress and first-touch referral attribution are stored on this device.
-          Pseudonymous usage events are collected to improve this resource.
+          Flashcard progress is stored on this device. Optional pseudonymous analytics are collected only if allowed.
         </p>
       </footer>
     </div>
